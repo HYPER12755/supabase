@@ -1,6 +1,6 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. The Kong override remains blocked by a pre-existing image permission failure and is deferred as a separate issue; it is excluded from Phase 1 sign-off. Do not start Phase 2 without explicit approval. Baseline tests pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Gateway, auth, and Postgres work has not started.
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Baseline tests pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs, 22/22 Centrifugo gateway). Phase 3 auth and Postgres work has not started.
 Last updated: 2026-11-01
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
@@ -91,7 +91,7 @@ Resolve these before the phase that depends on them.
 5. Postgres change payload mode (before Phase 4)
    - Recommendation: notification-only by default. Full row payload is opt-in per table after a privacy review.
 6. `/realtime/v1/connection/*` timing (before Phase 2)
-   - Recommendation: add the route in beta behind the same overlay so early adopters can test the eventual URL. Keep `/realtime/v1/websocket` on Supabase.
+   - Resolved in Phase 2: the route is in the beta overlay and points to Centrifugo. `/realtime/v1/websocket` remains on Supabase Realtime.
 7. Exact Centrifugo image tag (before Phase 1)
    - Resolved: pinned `centrifugo/centrifugo:v6.10.2` and verified with the local stack.
 8. Studio Centrifugo inspector (before Phase 10)
@@ -390,34 +390,52 @@ Verification on 2026-10-31 and 2026-11-01:
 
 Description: Expose Centrifugo through Envoy and Kong without touching Supabase Realtime routes.
 
-- [ ] Add a `centrifugo` cluster to `docker/volumes/api/envoy/cds.yaml`:
-  - [ ] `STRICT_DNS` to `centrifugo:8000`.
-  - [ ] HTTP health check on `/health`.
-  - [ ] Circuit breakers matching the Realtime cluster.
-- [ ] Add Envoy routes in a marked block:
-  - [ ] `/centrifugo/v1/connection/websocket` to the Centrifugo cluster.
-  - [ ] `/centrifugo/v1/websocket` alias rewrite to `/connection/websocket`.
-  - [ ] `/centrifugo/v1/health` rewrite to `/health`.
-  - [ ] `/centrifugo/v1/auth/token` to `centrifugo-auth:8090/auth/token`.
-  - [ ] `/centrifugo/v1/api` rewrite to `/api`, internal-only by default.
-  - [ ] `/realtime/v1/connection/` rewrite to `/connection/`, ordered before the existing `/realtime/v1/` route.
-- [ ] Ensure `/realtime/v1/websocket` still goes to `realtime-dev.supabase-realtime:4000`.
-- [ ] Ensure `/realtime/v1/api/tenants` and `/realtime/v1/api/openapi` remain blocked.
-- [ ] Disable basic auth on the Centrifugo routes as appropriate; do not inherit Supabase gateway restrictions that break WebSocket upgrades.
-- [ ] Configure CORS for the token endpoint.
-- [ ] Mirror the routes in `docker/volumes/api/kong.yml`:
-  - [ ] WebSocket service with `protocol: ws`.
-  - [ ] Health service with `protocol: http`.
-  - [ ] Auth token service with `protocol: http`.
-  - [ ] API service with `protocol: http`, internal-only by default.
-  - [ ] `/realtime/v1/connection/websocket` route ordered before the existing `/realtime/v1/` route.
-- [ ] Verify WebSocket upgrade through Envoy and through Kong.
-- [ ] Verify `/centrifugo/v1/websocket` and `/centrifugo/v1/connection/websocket` both reach Centrifugo.
-- [ ] Verify `/realtime/v1/websocket` still reaches Supabase Realtime.
-- [ ] Verify the HTTP API is not reachable without the Centrifugo API key.
-- [ ] Add gateway tests to `docker/tests/test-centrifugo.sh`.
+- [x] Add a `centrifugo` cluster to `docker/volumes/api/envoy/cds.yaml`:
+  - [x] `STRICT_DNS` to `centrifugo:8000`.
+  - [x] HTTP health check on `/health`.
+  - [x] Circuit breakers matching the Realtime cluster.
+- [x] Add Envoy routes in a marked block:
+  - [x] `/centrifugo/v1/connection/websocket` to the Centrifugo cluster.
+  - [x] `/centrifugo/v1/websocket` alias rewrite to `/connection/websocket`.
+  - [x] `/centrifugo/v1/health` rewrite to `/health`.
+  - [x] `/centrifugo/v1/auth/token` to `centrifugo-auth:8090/auth/token`.
+  - [x] `/centrifugo/v1/api` rewrite to `/api`, internal-only by default.
+  - [x] `/realtime/v1/connection/` rewrite to `/connection/`, ordered before the existing `/realtime/v1/` route.
+- [x] Ensure `/realtime/v1/websocket` still goes to `realtime-dev.supabase-realtime:4000`.
+- [x] Ensure `/realtime/v1/api/tenants` and `/realtime/v1/api/openapi` remain blocked.
+- [x] Disable basic auth on the Centrifugo routes as appropriate; do not inherit Supabase gateway restrictions that break WebSocket upgrades.
+- [x] Configure CORS for the token endpoint.
+- [x] Mirror the routes in `docker/volumes/api/kong.yml`:
+  - [x] WebSocket service with `protocol: ws`.
+  - [x] Health service with `protocol: http`.
+  - [x] Auth token service with `protocol: http`.
+  - [x] API service with `protocol: http`, internal-only by default.
+  - [x] `/realtime/v1/connection/websocket` route ordered before the existing `/realtime/v1/` route.
+- [x] Verify WebSocket upgrade through Envoy and through Kong.
+- [x] Verify `/centrifugo/v1/websocket` and `/centrifugo/v1/connection/websocket` both reach Centrifugo.
+- [x] Verify `/realtime/v1/websocket` still reaches Supabase Realtime.
+- [x] Verify the HTTP API is not reachable without the Centrifugo API key.
+- [x] Add gateway tests to `docker/tests/test-centrifugo.sh`.
 
-Acceptance: The full path table in section 6.1 behaves as documented; existing Realtime tests still pass.
+
+Verification (2026-11-01):
+
+- Recreated only `api-gw`; Envoy accepted the new clusters/routes, the unresolved `centrifugo-auth` host did not block startup, and the stack remained 12/12 healthy.
+- `docker/tests/test-centrifugo.sh` passed 22/22 against Envoy:
+  - health 200 with `{}` and no dashboard basic auth;
+  - primary, alias, and reserved `/realtime/v1/connection/websocket` upgrades returned 101 with `centrifuge-json`; a signed Centrifugo connect returned a client ID;
+  - an unapproved WebSocket origin returned 403;
+  - `/realtime/v1/websocket` still reached Supabase Realtime (Phoenix `phx_reply`);
+  - `/realtime/v1/api/ping` stayed 200; `/api/tenants` and `/api/openapi` stayed 403;
+  - API returned 401 without/with an invalid key and 200 with `X-API-Key`;
+  - token CORS preflight returned 200; token endpoint returned 503 because `centrifugo-auth` is Phase 3.
+- Kong `kong.yml` loaded in a disposable root container on `supabase_default`; the same gateway test passed 22/22 against its proxy port. No root workaround was applied to the real Kong override, and its pre-existing permission blocker remains.
+- Kong CORS returns `*` for the token origin while Envoy echoes the request origin; the test accepts either. The Phase 3 auth service should enforce the final allowed-origin policy.
+- Disabled the Centrifugo overlay and restarted the base stack: 11/11 healthy. Envoy started with the Centrifugo clusters unresolved; the Centrifugo and reserved alias paths returned 503, and `/realtime/v1/api/ping` remained 200. Restored the overlay to 12/12 healthy.
+- Post-Phase 2 baselines: 39/39 self-hosted, 56/56 auth keys, 13/13 container logs.
+- Node 22.23.4 was installed locally at `/home/user/.local/node-v22.23.4` and used for the test run. Prettier 3.8.0 check passed for the changed YAML and README; `TODO.md` is outside the repo Prettier glob and its existing tables would be reformatted.
+
+Acceptance: The full path table in section 6.1 behaves as documented on Envoy; existing Realtime tests still pass. The Kong mirror is config-validated, but runtime acceptance of the real Kong override remains blocked by the pre-existing image permission issue.
 
 ### Phase 3 — Auth and Authorization
 

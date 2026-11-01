@@ -233,6 +233,68 @@ services:
             - admin
             - anon
 
+  # BEGIN CENTRIFUGO BETA
+  ## Centrifugo WebSocket routes. The API gateway terminates TLS/HTTP and
+  ## forwards the WebSocket upgrade to Centrifugo.
+  - name: centrifugo-v1-ws
+    _comment: 'Centrifugo: /centrifugo/v1/* websocket aliases -> ws://centrifugo:8000/connection/websocket'
+    url: http://centrifugo:8000/connection/websocket
+    protocol: ws
+    routes:
+      - name: centrifugo-v1-connection-ws
+        strip_path: true
+        paths:
+          - /centrifugo/v1/connection/websocket
+      - name: centrifugo-v1-websocket-alias
+        strip_path: true
+        paths:
+          - /centrifugo/v1/websocket
+      - name: realtime-v1-connection-ws
+        strip_path: true
+        paths:
+          - /realtime/v1/connection/websocket
+    plugins:
+      - name: cors
+
+  ## Centrifugo health endpoint. No dashboard basic auth.
+  - name: centrifugo-v1-health
+    protocol: http
+    _comment: 'Centrifugo: /centrifugo/v1/health -> http://centrifugo:8000/health'
+    url: http://centrifugo:8000/health
+    routes:
+      - name: centrifugo-v1-health
+        strip_path: true
+        paths:
+          - /centrifugo/v1/health
+    plugins:
+      - name: cors
+
+  ## Phase 3 auth token service. Returns 503 until centrifugo-auth exists.
+  - name: centrifugo-v1-auth
+    protocol: http
+    _comment: 'Centrifugo auth: /centrifugo/v1/auth/token -> http://centrifugo-auth:8090/auth/token'
+    url: http://centrifugo-auth:8090/auth/token
+    routes:
+      - name: centrifugo-v1-auth-token
+        strip_path: true
+        paths:
+          - /centrifugo/v1/auth/token
+    plugins:
+      - name: cors
+
+  ## Centrifugo HTTP API. Centrifugo validates X-API-Key; do not add key-auth.
+  ## No CORS plugin: this is server-to-server only.
+  - name: centrifugo-v1-api
+    protocol: http
+    _comment: 'Centrifugo API: /centrifugo/v1/api/* -> http://centrifugo:8000/api/*'
+    url: http://centrifugo:8000/api
+    routes:
+      - name: centrifugo-v1-api
+        strip_path: true
+        paths:
+          - /centrifugo/v1/api
+  # END CENTRIFUGO BETA
+
   ## Secure Realtime routes
   - name: realtime-v1-ws
     _comment: 'Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*'

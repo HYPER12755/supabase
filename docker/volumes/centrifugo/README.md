@@ -2,7 +2,7 @@
 
 Centrifugo runs as an additive, opt-in realtime backend alongside Supabase Realtime.
 
-Phase 1 status: the Centrifugo service, config, local secrets, and health check exist. Gateway routes, auth, and Postgres changes are not implemented yet. Centrifugo is reachable only from the Compose network.
+Phase 2 status: the Centrifugo service, config, local secrets, health check, and Envoy gateway routes exist. Kong mirrors the routes and is config-validated; the Kong override itself remains blocked by a pre-existing image permission issue. Auth and Postgres changes are not implemented yet, so `/centrifugo/v1/auth/token` returns 503 until Phase 3.
 
 ## Enable
 
@@ -32,29 +32,29 @@ Stop before removing the overlay so Compose can remove the Centrifugo container.
 ```sh
 docker inspect --format '{{.State.Health.Status}}' supabase-centrifugo
 docker exec supabase-auth wget -qO- http://centrifugo:8000/health
+sh tests/test-centrifugo.sh
 ```
 
-`docker port supabase-centrifugo` should print nothing.
+`docker port supabase-centrifugo` should print nothing. `test-centrifugo.sh` checks the gateway contract, including that `/realtime/v1/websocket` still reaches Supabase Realtime.
 
 ## Endpoints
 
-These paths are reserved by the beta contract but are not routed through the gateway until Phase 2:
+These paths are routed through the gateway:
 
-- `/centrifugo/v1/connection/websocket`
-- `/centrifugo/v1/websocket`
-- `/centrifugo/v1/auth/token`
-- `/centrifugo/v1/health`
-- `/centrifugo/v1/api/*`
-- `/realtime/v1/connection/*`
+- `/centrifugo/v1/connection/websocket` (primary WebSocket)
+- `/centrifugo/v1/websocket` (alias)
+- `/centrifugo/v1/health` (no dashboard basic auth)
+- `/centrifugo/v1/api/*` (requires `X-API-Key`; no CORS)
+- `/realtime/v1/connection/*` (reserved SDK alias to Centrifugo)
 
-Supabase Realtime keeps `/realtime/v1/websocket` and `/realtime/v1/api/*`.
+`/centrifugo/v1/auth/token` is routed to `centrifugo-auth:8090` but returns 503 until the Phase 3 service exists. Supabase Realtime keeps `/realtime/v1/websocket` and `/realtime/v1/api/*`.
 
 ## Configuration
 
 - `config.json` contains non-secret server defaults and namespace placeholders.
 - `.env.centrifugo` contains local secrets and is loaded by the overlay.
 - `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS` is derived from the deployment's `SITE_URL` and `SUPABASE_PUBLIC_URL`; no environment-specific origins are committed.
-- The HTTP API is internal-only. Do not publish port 8000 or the API key.
+- The HTTP API requires the Centrifugo API key and must not be exposed to clients. Do not publish port 8000 or the API key.
 - Internal HTTP API requests use the `X-API-Key` header; `Authorization: Bearer` is not accepted.
 - The admin UI is disabled by default.
 

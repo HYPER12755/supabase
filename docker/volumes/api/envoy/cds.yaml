@@ -95,6 +95,73 @@ resources:
           max_pending_requests: 10000
           max_requests: 10000
 
+  # BEGIN CENTRIFUGO BETA
+  - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+    name: centrifugo
+    connect_timeout: 5s
+    type: STRICT_DNS
+    dns_refresh_rate: 5s
+    dns_failure_refresh_rate:
+      base_interval: 1s
+      max_interval: 1s
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: centrifugo
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: centrifugo
+                    port_value: 8000
+    health_checks:
+      - timeout: 2s
+        interval: 5s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: /health
+    circuit_breakers:
+      thresholds:
+        - priority: DEFAULT
+          max_connections: 10000
+          max_pending_requests: 10000
+          max_requests: 10000
+
+  # Phase 3 target. The route returns 503 until the auth service exists.
+  - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+    name: centrifugo-auth
+    connect_timeout: 5s
+    type: STRICT_DNS
+    dns_refresh_rate: 5s
+    dns_failure_refresh_rate:
+      base_interval: 1s
+      max_interval: 1s
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: centrifugo-auth
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: centrifugo-auth
+                    port_value: 8090
+    health_checks:
+      - timeout: 2s
+        interval: 5s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: /health
+    circuit_breakers:
+      thresholds:
+        - priority: DEFAULT
+          max_connections: 10000
+          max_pending_requests: 10000
+          max_requests: 10000
+  # END CENTRIFUGO BETA
+
   - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
     name: storage
     connect_timeout: 5s
