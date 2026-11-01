@@ -1,0 +1,24 @@
+{
+  "http_server": {
+    "port": 8000
+  },
+  "channel": {
+    "namespaces": [
+      { "name": "tenant" },
+      { "name": "user" },
+      { "name": "public" }
+    ]
+  },
+  "health": {
+    "enabled": true
+  },
+  "prometheus": {
+    "enabled": true
+  },
+  "admin": {
+    "enabled": false
+  },
+  "log": {
+    "level": "info"
+  }
+}

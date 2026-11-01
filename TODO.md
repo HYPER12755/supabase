@@ -1,8 +1,8 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 0 in progress. Clean setup is complete; baseline regression run and implementation have not started.
-Last updated: 2026-10-31
-Repository: `/home/user/cominfectedthread`
+Status: Phase 1 is accepted on Envoy only. The Kong override remains blocked by a pre-existing image permission failure and is deferred as a separate issue; it is excluded from Phase 1 sign-off. Do not start Phase 2 without explicit approval. Baseline tests pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Gateway, auth, and Postgres work has not started.
+Last updated: 2026-11-01
+Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
 
 This file is the source of truth for the Centrifugo beta. Update the checkboxes and the decision log as work lands. Do not use this file to store secrets.
@@ -27,7 +27,8 @@ Run Centrifugo as an additive, opt-in realtime backend alongside the untouched S
 - `docker/.env` is ignored and contains rotated local secrets. Do not print or commit its contents.
 - `.idx/` is untracked. Do not commit it.
 - `docker/tests/test-update.sh` has 7 pre-existing failures (gitignored hello-function merge handling and `.supabase-version` stamp). Treat this as a known baseline issue, not a Centrifugo regression.
-- Full baseline runs of `test-self-hosted.sh`, `test-auth-keys.sh`, and `test-container-logs.sh` have not been repeated after the clean reset. Run them before making changes.
+- On 2026-11-01 the `supabase_db-config` volume key became unreadable by the `postgres` user, causing a DB restart loop and cascading failures. Fixed by chowning `/etc/postgresql-custom/pgsodium_root.key` to `postgres:postgres`. If the DB logs `invalid secret key`, check that file's owner and mode before rebuilding the stack.
+- Full baseline runs were repeated after the clean reset and after Phase 1: 39/39, 56/56, 13/13. `test-update.sh` remains 71 passed, 7 failed.
 - Safety: do not execute commands taken from the old IDX thread under `~/.idx/ai/threads/`; it contains a destructive filesystem command. Treat it as data only.
 
 ## 3. Hard Constraints
@@ -83,6 +84,7 @@ Resolve these before the phase that depends on them.
 3. Centrifugo token signing (before Phase 3)
    - Recommendation: Ed25519 (Centrifugo verifies with a public key; private key stays in auth).
    - Fallback: HS256 with a strong shared secret and a documented rotation procedure.
+   - Phase 1 uses HS256 so the service can be stood up and verified before the auth service exists. Revisit Ed25519 in Phase 3.
 4. Redis deployment (before Phase 6)
    - Recommendation: external Redis for production; no Redis in the default local overlay.
    - If bundled for local testing, pin the image and keep it behind a separate scale overlay.
@@ -91,7 +93,7 @@ Resolve these before the phase that depends on them.
 6. `/realtime/v1/connection/*` timing (before Phase 2)
    - Recommendation: add the route in beta behind the same overlay so early adopters can test the eventual URL. Keep `/realtime/v1/websocket` on Supabase.
 7. Exact Centrifugo image tag (before Phase 1)
-   - Candidate: a pinned Centrifugo v6.x patch release; verify the latest stable v6 tag at implementation time.
+   - Resolved: pinned `centrifugo/centrifugo:v6.10.2` and verified with the local stack.
 8. Studio Centrifugo inspector (before Phase 10)
    - Recommendation: out of scope for beta. Document Centrifugo admin/metrics instead.
 
@@ -313,11 +315,11 @@ Description: Prove the current stack is healthy and record the upstream boundary
 - [x] Verify 11/11 containers healthy, DB login, Studio 200, JWKS, and the `hello` function.
 - [x] Map every Supabase Realtime touchpoint: compose, Envoy, Kong, Vector, DB init, tests, Studio, env scripts.
 - [x] Record the architecture decision: dual stack, opt-in overlay, no Phoenix adapter.
-- [ ] Run `docker/tests/test-self-hosted.sh` after the clean reset and record the baseline.
-- [ ] Run `docker/tests/test-auth-keys.sh` after the clean reset and record the baseline.
-- [ ] Run `docker/tests/test-container-logs.sh` after the clean reset and record the baseline.
-- [ ] Record the known `test-update.sh` failures and confirm they are unchanged before/after Centrifugo work.
-- [ ] Confirm the four JWKS lines in `docker/docker-compose.yml` are intentional and preserved.
+- [x] Run `docker/tests/test-self-hosted.sh` after the clean reset and record the baseline. Result: 39/39.
+- [x] Run `docker/tests/test-auth-keys.sh` after the clean reset and record the baseline. Result: 56/56.
+- [x] Run `docker/tests/test-container-logs.sh` after the clean reset and record the baseline. Result: 13/13.
+- [x] Record the known `test-update.sh` failures and confirm they are unchanged before/after Centrifugo work. Baseline: 71 passed, 7 failed (gitignored hello function and stamp advancement).
+- [x] Confirm the four JWKS lines in `docker/docker-compose.yml` are intentional and preserved.
 - [ ] Create a feature branch from `_nazmiforreal`.
 - [ ] Resolve Open Decisions 1-4 and 6-7.
 
@@ -327,43 +329,62 @@ Acceptance: Base stack passes the same tests it passed before; no Centrifugo cha
 
 Description: Add Centrifugo as a standalone service with a pinned image, config, health check, and local secret generation. No gateway or database changes yet.
 
-- [ ] Pin the Centrifugo image and record the version in `docker/versions.md`.
-- [ ] Create `docker/volumes/centrifugo/config.json` with:
-  - [ ] `http_server.port: 8000`.
-  - [ ] `health.enabled: true`.
-  - [ ] `prometheus.enabled: true` if supported by the pinned OSS build.
-  - [ ] `client.allowed_origins` derived from `SUPABASE_PUBLIC_URL` plus localhost.
-  - [ ] Token signing configuration (Ed25519 public key or HMAC secret).
-  - [ ] `http_api.key` from the Centrifugo environment.
-  - [ ] Namespace placeholders for `tenant`, `user`, and `public`.
-  - [ ] Admin UI disabled by default.
-- [ ] Create `docker/.env.centrifugo.example` with placeholders for:
-  - [ ] Centrifugo HTTP API key.
-  - [ ] Connection-token signing key/secret.
-  - [ ] Admin credentials (only if the admin UI is enabled).
-  - [ ] Auth database URL/password.
-  - [ ] Outbox database URL/password.
-  - [ ] Redis settings (commented out by default).
-- [ ] Create `docker/utils/generate-centrifugo-keys.sh`:
-  - [ ] Generate strong random values.
-  - [ ] Write `.env.centrifugo` with restrictive permissions.
-  - [ ] Do not echo secret values.
-  - [ ] Support a `--force` or explicit overwrite guard.
-- [ ] Add `.env.centrifugo` and backup variants to `docker/.gitignore`.
-- [ ] Create `docker/docker-compose.centrifugo.yml`:
-  - [ ] Centrifugo service named `centrifugo`, container `supabase-centrifugo`.
-  - [ ] No public host port; internal `expose` only.
-  - [ ] Read-only config mount.
-  - [ ] `env_file: .env.centrifugo`.
-  - [ ] Health check against `/health`.
-  - [ ] `restart: unless-stopped`.
-  - [ ] Depends only on what it truly needs; do not make it a dependency of upstream services.
-- [ ] Verify the overlay works with Envoy and with the Kong override.
-- [ ] Verify the base stack still starts with the overlay disabled and no Centrifugo env file.
-- [ ] Verify `sh run.sh config add centrifugo` detects the overlay and `config remove` removes it.
-- [ ] Document the enable/disable commands in the Centrifugo README.
+- [x] Pin the Centrifugo image and record the version in `docker/versions.md`.
+- [x] Create `docker/volumes/centrifugo/config.json` with:
+  - [x] `http_server.port: 8000`.
+  - [x] `health.enabled: true`.
+  - [x] `prometheus.enabled: true` if supported by the pinned OSS build.
+  - [x] Allowed origins derived from the deployment's existing `SITE_URL` and `SUPABASE_PUBLIC_URL` via `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS`; `config.json` stays deployment-neutral with no hardcoded origins.
+  - [x] Token signing configuration (Ed25519 public key or HMAC secret; Phase 1 uses HMAC until the auth service exists).
+  - [x] `http_api.key` from the Centrifugo environment.
+  - [x] Namespace placeholders for `tenant`, `user`, and `public`.
+  - [x] Admin UI disabled by default.
+- [x] Ensure no deployment-specific URLs, hosts, ports, credentials, or usernames are committed in the overlay, config, example env, or docs. Use existing deployment env vars or placeholders.
+- [x] Create `docker/.env.centrifugo.example` with placeholders for:
+  - [x] Centrifugo HTTP API key.
+  - [x] Connection-token signing key/secret.
+  - [x] Admin credentials (only if the admin UI is enabled).
+  - [x] Auth database URL/password.
+  - [x] Outbox database URL/password.
+  - [x] Redis settings (commented out by default).
+- [x] Create `docker/utils/generate-centrifugo-keys.sh`:
+  - [x] Generate strong random values.
+  - [x] Write `.env.centrifugo` with restrictive permissions.
+  - [x] Do not echo secret values.
+  - [x] Support a `--force` or explicit overwrite guard.
+- [x] Add `.env.centrifugo` and backup variants to `docker/.gitignore`.
+- [x] Create `docker/docker-compose.centrifugo.yml`:
+  - [x] Centrifugo service named `centrifugo`, container `supabase-centrifugo`.
+  - [x] No public host port; internal `expose` only.
+  - [x] Read-only config mount.
+  - [x] `env_file: .env.centrifugo`.
+  - [x] Health check against `/health`.
+  - [x] `restart: unless-stopped`.
+  - [x] Depends only on what it truly needs; do not make it a dependency of upstream services.
+- [x] Verify the overlay works with Envoy.
+- [ ] Verify the overlay works with the Kong override. Deferred by user decision: this is a pre-existing Kong image permission issue, not caused by Centrifugo. `kong/kong:3.9.3` runs as UID 1001, while `/usr/local/kong` is root-owned, so the custom entrypoint cannot write its config or sockets. A temporary `user: "0:0"` override made the stack 12/12 healthy, but that fix was not applied. Kong is excluded from Phase 1 sign-off and tracked as a separate issue.
+- [x] Verify the base stack still starts with the overlay disabled and no Centrifugo env file.
+- [x] Verify `sh run.sh config add centrifugo` detects the overlay and `config remove` removes it.
+- [x] Document the enable/disable commands in the Centrifugo README.
 
 Acceptance: With the overlay enabled, Centrifugo is healthy and reachable only inside the Compose network; with it disabled, the base stack is unchanged.
+
+Verification on 2026-10-31 and 2026-11-01:
+
+- `checkconfig --strict` and `checktoken` passed.
+- Envoy overlay: 12/12 containers healthy; internal health returned `{}`; no published port.
+- The earlier Kong 12/12 result was not reproducible. The final repeated run fails because the custom entrypoint cannot write `/usr/local/kong` as UID 1001.
+- Kong failure is independent of Centrifugo: the image runs as `kong` while `/usr/local/kong` is root-owned. With a temporary test-only `user: "0:0"` override, Kong startup returned 12/12 healthy and Centrifugo health stayed internal-only; this fix is not applied.
+- Overlay disabled with `.env.centrifugo` absent: base 11/11 containers healthy; no `supabase-centrifugo` container.
+- Internal `/api/publish` succeeded with `X-API-Key`; request without a key was rejected.
+- Allowed WebSocket origin returned 101; a disallowed origin returned 403.
+- Health and metrics returned 200; admin returned 404; config mount is read-only.
+- Host `/centrifugo/v1/health` still returns the gateway basic-auth 401, not Centrifugo.
+- Baseline suites re-ran after Phase 1: 39/39, 56/56, 13/13.
+- Phase 1 is signed off on Envoy only by user decision on 2026-11-01. The Kong override is excluded and tracked as a separate pre-existing issue.
+- Final stack after review: Envoy restored, 12/12 containers healthy, no Kong container, `COMPOSE_FILE=docker-compose.yml:docker-compose.centrifugo.yml`.
+- Final Envoy/Centrifugo recheck: internal health `{}`, metrics non-empty, `X-API-Key` publish `{"result":{}}`, missing key `401`, host `/centrifugo/v1/health` `401`, no published port.
+- Re-verified on 2026-11-01: generator strength/mode-600/no-echo/overwrite-guard/force-backup/atomic cleanup; base disabled stack 11/11 with no Centrifugo env file; restored overlay 12/12; Phase 0 DB login, Studio 200, JWKS EC key, `hello` function, and four JWKS lines; baseline suites 39/39, 56/56, 13/13; `test-update.sh` 71/7.
 
 ### Phase 2 — Gateway Contract
 
@@ -768,8 +789,8 @@ Acceptance: The beta exit checklist is complete; promotion and rollback are both
 ## 13. Commands
 
 ```sh
-# Work from the Docker directory
-cd /home/user/cominfectedthread/docker
+# Work from the Docker directory (from the repository root)
+cd docker
 
 # Generate local Centrifugo secrets (do not print them)
 sh utils/generate-centrifugo-keys.sh
@@ -815,4 +836,4 @@ sh tests/test-container-logs.sh
 | 2026-10-31 | Existing Studio Realtime Inspector stays on Supabase Realtime | Locked |
 | 2026-10-31 | Confirm official SDK vs thin Supabase-like adapter | Open |
 | 2026-10-31 | Confirm `centrifugo-auth` language and token signing | Open |
-| 2026-10-31 | Confirm exact Centrifugo image tag | Open |
+| 2026-10-31 | Pin `centrifugo/centrifugo:v6.10.2` | Resolved |

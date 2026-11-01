@@ -1,0 +1,33 @@
+# Centrifugo beta overlay. Enable with:
+#   sh run.sh config add centrifugo
+#
+# This overlay is additive. It does not replace or reconfigure Supabase Realtime.
+# Gateway routes are added in Phase 2; Phase 1 exposes Centrifugo only inside
+# the Compose network.
+
+services:
+  centrifugo:
+    container_name: supabase-centrifugo
+    image: centrifugo/centrifugo:v6.10.2
+    restart: unless-stopped
+    env_file:
+      - .env.centrifugo
+    environment:
+      # Derive allowed browser origins from the deployment's own URLs. Do not
+      # commit environment-specific origins here.
+      CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: "${SITE_URL} ${SUPABASE_PUBLIC_URL}"
+    volumes:
+      - ./volumes/centrifugo/config.json:/centrifugo/config.json:ro,z
+    command: ["centrifugo", "-c", "/centrifugo/config.json"]
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8000/health"
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 5
+      start_period: 10s
