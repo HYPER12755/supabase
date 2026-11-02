@@ -1,7 +1,7 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 Postgres outbox and the authoritative `centrifugo.authorize` migration have not started.
-Last updated: 2026-11-01
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`.
+Last updated: 2026-11-02
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
 
@@ -502,48 +502,57 @@ Acceptance: Valid users and anonymous clients connect; invalid, expired, cross-t
 
 Description: Add the separate change plane without touching `_realtime`.
 
-- [ ] Create `docker/volumes/centrifugo/sql/centrifugo.sql`:
-  - [ ] `CREATE SCHEMA IF NOT EXISTS centrifugo`.
-  - [ ] Roles and grants.
-  - [ ] Outbox and dead-letter tables.
-  - [ ] `centrifugo.send`.
-  - [ ] `centrifugo.broadcast_changes`.
-  - [ ] `centrifugo.broadcast_changes_trigger`.
-  - [ ] `centrifugo.authorize`.
-  - [ ] Idempotent `CREATE OR REPLACE` statements.
-- [ ] Ensure all functions use a fixed `search_path` and do not accept raw SQL.
-- [ ] Create a migration path:
-  - [ ] Idempotent SQL that can run on fresh and existing databases.
-  - [ ] A migration service or `run.sh` subcommand that waits for Postgres.
-  - [ ] Verify `docker compose up --wait` behavior for one-shot services; if it fails, run migrations from the auth/outbox entrypoint or an explicit command.
-- [ ] Build `centrifugo-outbox`:
-  - [ ] Connect with the least-privilege role.
-  - [ ] `LISTEN` for low-latency wake-ups.
-  - [ ] Poll as a fallback.
-  - [ ] Claim rows with `FOR UPDATE SKIP LOCKED`.
-  - [ ] Publish through the internal Centrifugo HTTP API.
-  - [ ] Mark published rows and retry transient failures.
-  - [ ] Move poison messages to dead-letter.
-  - [ ] Clean up published rows on retention.
-  - [ ] Expose metrics for lag, batch size, retries, and failures.
-- [ ] Define ordering semantics:
-  - [ ] Single-consumer mode for strict ordering.
-  - [ ] Partitioned mode for scale; one worker per channel hash.
-- [ ] Implement notification-only payloads by default.
-- [ ] Implement full-row payloads only for an explicit allowlist of tables.
-- [ ] Add a reviewed table opt-in example:
-  - [ ] Trigger creation SQL.
-  - [ ] Tenant key argument.
-  - [ ] Channel naming.
-  - [ ] RLS/privacy note.
-- [ ] Add tests:
-  - [ ] Insert/update/delete triggers create outbox rows.
-  - [ ] Consumer publishes to Centrifugo.
-  - [ ] Consumer restart does not lose rows.
-  - [ ] Duplicate publish is safe for clients via `message_id`.
-  - [ ] Poison messages land in dead-letter.
-  - [ ] Notification-only mode contains no row data.
-  - [ ] Cross-tenant payloads are never published to a tenant channel.
+- [x] Create `docker/volumes/centrifugo/sql/centrifugo.sql`:
+  - [x] `CREATE SCHEMA IF NOT EXISTS centrifugo`.
+  - [x] Roles and grants.
+  - [x] Outbox and dead-letter tables.
+  - [x] `centrifugo.send`.
+  - [x] `centrifugo.broadcast_changes`.
+  - [x] `centrifugo.broadcast_changes_trigger`.
+  - [x] `centrifugo.authorize`.
+  - [x] Idempotent `CREATE OR REPLACE` statements.
+- [x] Ensure all functions use a fixed `search_path` and do not accept raw SQL.
+- [x] Create a migration path:
+  - [x] Idempotent SQL that can run on fresh and existing databases.
+  - [x] A migration service or `run.sh` subcommand that waits for Postgres.
+  - [x] Verify `docker compose up --wait` behavior for one-shot services; if it fails, run migrations from the auth/outbox entrypoint or an explicit command.
+- [x] Build `centrifugo-outbox`:
+  - [x] Connect with the least-privilege role.
+  - [x] `LISTEN` for low-latency wake-ups.
+  - [x] Poll as a fallback.
+  - [x] Claim rows with `FOR UPDATE SKIP LOCKED`.
+  - [x] Publish through the internal Centrifugo HTTP API.
+  - [x] Mark published rows and retry transient failures.
+  - [x] Move poison messages to dead-letter.
+  - [x] Clean up published rows on retention.
+  - [x] Expose metrics for lag, batch size, retries, and failures.
+- [x] Define ordering semantics:
+  - [x] Single-consumer mode for strict ordering.
+  - [x] Partitioned mode for scale; one worker per hash partition.
+- [x] Implement notification-only payloads by default.
+- [x] Implement full-row payloads only for an explicit allowlist of tables.
+- [x] Add a reviewed table opt-in example:
+  - [x] Trigger creation SQL.
+  - [x] Tenant key argument.
+  - [x] Channel naming.
+  - [x] RLS/privacy note.
+- [x] Add tests:
+  - [x] Insert/update/delete triggers create outbox rows.
+  - [x] Consumer publishes to Centrifugo.
+  - [x] Consumer restart does not lose rows.
+  - [x] Duplicate publish is safe for clients via `message_id`.
+  - [x] Poison messages land in dead-letter.
+  - [x] Notification-only mode contains no row data.
+  - [x] Cross-tenant payloads are never published to a tenant channel.
+
+Verification (2026-11-02):
+- `sql/centrifugo.sql` was applied twice to a disposable `supabase/postgres:17.6.1.136` database and re-run repeatedly on the local stack, including after the final grant changes; re-running is idempotent. Functions all set a fixed `search_path` and use static SQL only. A fresh-database reverify passed 37/37 checks for migration idempotency, grants, auth semantics, trigger/allowlist behavior, and privilege denials.
+- The migration service is behind the `centrifugo-migrate` profile and runs as `supabase_admin` with `POSTGRES_PASSWORD`; application containers use only the `centrifugo_auth` and `centrifugo_outbox` roles. A direct check confirmed the outbox role cannot insert into `centrifugo.outbox` and the auth role cannot read it, while `centrifugo.authorize` and outbox reads/updates succeed. A reviewed trigger was created successfully as `postgres`, validating the narrow migration-role grants. The migration revokes legacy table/function grants before reapplying the intended set; dead-letter access is `SELECT, INSERT` only. Supabase's `postgres` role retains platform-level read-all membership, so it is trusted; it has no explicit outbox write or send/broadcast execute privileges.
+- `docker compose up -d --wait centrifugo-migrate` returns 1 when the one-shot container exits 0, so migrations are not part of `up --wait`. `run.sh migrate` and `run.sh start` run the migration before `up --wait`; the migration service is profile-isolated.
+- `centrifugo-outbox` unit tests: 18/18 (config validation, retry policy, dead-letter transitions, idempotency key, ordered batches including failure head-of-line blocking). Live integration: 11/11 (insert/update/delete delivery, restart durability, full-row allowlist, duplicate `message_id`, dead-letter, notification-only privacy, cross-tenant isolation).
+- `test-centrifugo.sh` remains 22/22, including the Supabase Realtime regression checks; `test-centrifugo-auth.sh` remains 39/39 with the database authorizer active; auth unit tests are now 13/13. Baselines re-ran at 39/39 self-hosted, 56/56 auth keys, 13/13 container logs, and 11/11 upgrades manifest. `test-update.sh` reran at the known baseline of 71 passed / 7 pre-existing failures.
+- Security hardening: `user_metadata` is user-editable and is no longer trusted for tenant authorization in the auth service or `centrifugo.authorize`; the SQL and unit suite default-deny a token whose only tenant claim is `user_metadata.tenant_id`. Live `psql` check returned `false` for a user_metadata-only claim and `true` for the equivalent app_metadata claim. Token and channel tests still pass.
+- The live worker uses `LISTEN centrifugo_outbox` plus polling, `FOR UPDATE SKIP LOCKED`, lock renewal, exponential retry, DLQ, retention cleanup, and Prometheus metrics. Strict mode is documented as single-consumer; a transient failure pauses and releases the remaining claimed batch, and the delayed row blocks later rows across polls until it succeeds or dead-letters. Partitioned mode filters by `hashtext(channel) % partition_count`.
 
 Acceptance: A reviewed table change reaches a subscribed client; no rows are lost or leaked; `_realtime` is untouched.
 

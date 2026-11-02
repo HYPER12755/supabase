@@ -36,9 +36,7 @@ export function extractTenantId(claims) {
   if (!isObject(claims)) return null
   const candidates = [
     claims.app_metadata?.tenant_id,
-    claims.user_metadata?.tenant_id,
     claims.tenant_id,
-    claims.meta?.tenant_id,
   ]
   return candidates.find((value) => isUuid(value)) || null
 }

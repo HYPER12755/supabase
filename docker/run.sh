@@ -13,7 +13,8 @@
 # (accepts either a short name like 'pg17' or 'docker-compose.pg17.yml')
 #
 # Usage:
-#   sh run.sh start                  # docker compose up -d --wait
+#   sh run.sh start                  # run migrations, then docker compose up -d --wait
+#   sh run.sh migrate                # run the Centrifugo SQL migrations
 #   sh run.sh stop                   # docker compose down
 #   sh run.sh restart [service]      # restart the stack (or named services)
 #   sh run.sh restart --except <svc>...  # restart all services except the named ones
@@ -130,7 +131,13 @@ CMD="${1:-help}"
 [ "$#" -gt 0 ] && shift
 
 case "$CMD" in
+    migrate)
+        exec docker compose run --rm centrifugo-migrate "$@"
+        ;;
     start|up)
+        if docker compose config --profiles 2>/dev/null | grep -qx 'centrifugo-migrate'; then
+            docker compose run --rm centrifugo-migrate
+        fi
         exec docker compose up -d --wait "$@"
         ;;
     stop|down)

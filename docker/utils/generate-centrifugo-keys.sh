@@ -43,6 +43,18 @@ if [ -f "$env_file" ]; then
     chmod 600 "$env_file.old"
 fi
 
+read_env_value() {
+    [ -f "$docker_dir/.env" ] || return 0
+    grep "^$1=" "$docker_dir/.env" | head -n1 | cut -d= -f2- | tr -d "\r\"'"
+}
+
+postgres_host=$(read_env_value POSTGRES_HOST)
+postgres_port=$(read_env_value POSTGRES_PORT)
+postgres_db=$(read_env_value POSTGRES_DB)
+postgres_host=${postgres_host:-db}
+postgres_port=${postgres_port:-5432}
+postgres_db=${postgres_db:-postgres}
+
 umask 077
 tmp_file="$env_file.tmp.$$"
 trap 'rm -f "$tmp_file"' EXIT HUP INT TERM
@@ -66,13 +78,11 @@ CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY=$token_secret
 # CENTRIFUGO_CLIENT_TOKEN_HMAC_PREVIOUS_SECRET_KEY_VALID_UNTIL=
 CENTRIFUGO_HTTP_API_KEY=$http_api_key
 
-# Phase 3: uncomment when the centrifugo_auth role exists. Replace the host,
-# port, and database placeholders with this deployment's values.
-# CENTRIFUGO_AUTH_DATABASE_URL=postgresql://centrifugo_auth:$auth_db_password@POSTGRES_HOST:POSTGRES_PORT/POSTGRES_DB
-
-# Phase 4: uncomment when the centrifugo_outbox role exists. Replace the host,
-# port, and database placeholders with this deployment's values.
-# CENTRIFUGO_OUTBOX_DATABASE_URL=postgresql://centrifugo_outbox:$outbox_db_password@POSTGRES_HOST:POSTGRES_PORT/POSTGRES_DB
+# Database roles created by the centrifugo-migrate Compose service.
+CENTRIFUGO_AUTH_DB_PASSWORD=$auth_db_password
+CENTRIFUGO_OUTBOX_DB_PASSWORD=$outbox_db_password
+CENTRIFUGO_AUTH_DATABASE_URL=postgresql://centrifugo_auth:$auth_db_password@$postgres_host:$postgres_port/$postgres_db
+CENTRIFUGO_OUTBOX_DATABASE_URL=postgresql://centrifugo_outbox:$outbox_db_password@$postgres_host:$postgres_port/$postgres_db
 
 # Admin UI is disabled by default. Uncomment both to enable it internally.
 # CENTRIFUGO_ADMIN_PASSWORD=$admin_password

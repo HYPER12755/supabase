@@ -6,6 +6,34 @@
 # host port; only the API gateway exposes the beta paths.
 
 services:
+  centrifugo-migrate:
+    container_name: supabase-centrifugo-migrate
+    profiles: ["centrifugo-migrate"]
+    image: supabase/postgres:17.6.1.136
+    restart: "no"
+    read_only: true
+    env_file:
+      - .env.centrifugo
+    environment:
+      PGHOST: "${POSTGRES_HOST}"
+      PGPORT: "${POSTGRES_PORT}"
+      PGUSER: "supabase_admin"
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      PGDATABASE: "${POSTGRES_DB}"
+    volumes:
+      - ./volumes/centrifugo/sql/centrifugo.sql:/sql/centrifugo.sql:ro,z
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_AUTH_DB_PASSWORD:?CENTRIFUGO_AUTH_DB_PASSWORD is required}"
+          : "$${CENTRIFUGO_OUTBOX_DB_PASSWORD:?CENTRIFUGO_OUTBOX_DB_PASSWORD is required}"
+          exec psql -v ON_ERROR_STOP=1 -f /sql/centrifugo.sql
+    depends_on:
+      db:
+        condition: service_healthy
+
   centrifugo-auth:
     container_name: supabase-centrifugo-auth
     image: supabase/centrifugo-auth:0.1.0
@@ -72,6 +100,38 @@ services:
         [
           "CMD-SHELL",
           "nc -z 127.0.0.1 8000"
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  centrifugo-outbox:
+    container_name: supabase-centrifugo-outbox
+    image: supabase/centrifugo-outbox:0.1.0
+    build:
+      context: ./volumes/centrifugo/outbox
+    restart: unless-stopped
+    read_only: true
+    stop_grace_period: 20s
+    env_file:
+      - .env.centrifugo
+    environment:
+      CENTRIFUGO_HTTP_API_URL: "http://centrifugo:8000"
+      CENTRIFUGO_OUTBOX_ORDERING_MODE: "strict"
+      CENTRIFUGO_OUTBOX_PARTITION_COUNT: "1"
+      CENTRIFUGO_OUTBOX_PARTITION_INDEX: "0"
+      CENTRIFUGO_OUTBOX_METRICS_PORT: "9100"
+    depends_on:
+      centrifugo:
+        condition: service_healthy
+    expose:
+      - "9100"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get({host:'127.0.0.1',port:9100,path:'/health'},(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
         ]
       timeout: 5s
       interval: 10s

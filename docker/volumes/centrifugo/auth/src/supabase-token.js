@@ -24,7 +24,6 @@ function audienceMatches(audience, expected) {
 function tenantIdFromClaims(claims) {
   const candidates = [
     claims.app_metadata?.tenant_id,
-    claims.user_metadata?.tenant_id,
     claims.tenant_id,
   ]
   return candidates.find((value) => isUuid(value)) || null

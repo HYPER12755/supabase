@@ -81,6 +81,22 @@ test('rejects expired, service-role, wrong-audience, and unsupported tokens', as
   })
 })
 
+test('does not trust user-editable user_metadata for tenant authorization', async () => {
+  const result = await verify(
+    signJwt(claims({ app_metadata: {}, user_metadata: { tenant_id: TENANT_ID } }))
+  )
+  assert.equal(result.tenantId, null)
+
+  const decision = await authorizeChannel({
+    action: 'subscribe',
+    channel: `tenant:${TENANT_ID}:table:messages`,
+    userId: USER_ID,
+    claims: { user_metadata: { tenant_id: TENANT_ID } },
+  })
+  assert.equal(decision.allowed, false)
+  assert.equal(decision.reason, 'tenant_mismatch')
+})
+
 test('verifies legacy HS256 tokens when a secret is configured', async () => {
   const token = signJwt(claims({ iss: 'supabase' }), { alg: 'HS256', secret: 'legacy-secret' })
   const result = await verify(token)

@@ -1,5 +1,8 @@
 # Docker image version updates in docker-compose.yml
 
+## 2026-11-02
+- supabase/centrifugo-outbox:0.1.0 (new; Centrifugo beta overlay only; node:22.23.4-alpine base)
+
 ## 2026-11-01
 - node:22.23.4-alpine (new; centrifugo-auth build base)
 - supabase/centrifugo-auth:0.1.0 (new; Centrifugo beta overlay only)
