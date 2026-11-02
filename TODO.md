@@ -1,6 +1,6 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Baseline tests pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs, 22/22 Centrifugo gateway). Phase 3 auth and Postgres work has not started.
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 Postgres outbox and the authoritative `centrifugo.authorize` migration have not started.
 Last updated: 2026-11-01
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
@@ -441,41 +441,60 @@ Acceptance: The full path table in section 6.1 behaves as documented on Envoy; e
 
 Description: Build `centrifugo-auth` as the only bridge between Supabase Auth, Centrifugo, and Postgres channel authorization.
 
-- [ ] Implement the service skeleton and health endpoint.
-- [ ] Implement Supabase JWT validation:
-  - [ ] Fetch and cache Supabase Auth JWKS.
-  - [ ] Verify signature, expiry, issuer, and audience.
-  - [ ] Support legacy HS256 only if required; otherwise document the limitation.
-  - [ ] Reject `service_role` and unknown roles for client connections.
-- [ ] Implement token issuance:
-  - [ ] Authenticated user: `sub` = Supabase user UUID.
-  - [ ] Anonymous: `sub` = empty string, only with a valid publishable key.
-  - [ ] Include short `exp`, `iat`, `aud`, `iss`, `info`, and `meta`.
-  - [ ] Never include secrets or service-role claims.
-- [ ] Implement `POST /auth/token`:
-  - [ ] Accept `apikey` for publishable/legacy anon keys.
-  - [ ] Accept `Authorization: Bearer` for user sessions.
-  - [ ] Set CORS headers for allowed origins.
-  - [ ] Rate-limit by IP and user.
-- [ ] Implement token refresh behavior compatible with Centrifugo SDK `getToken`.
-- [ ] Implement `POST /auth/subscribe`:
-  - [ ] Parse and validate the channel.
-  - [ ] Reject unknown namespaces and malformed IDs.
-  - [ ] Check user/tenant ownership.
-  - [ ] Call `centrifugo.authorize(channel, claims)`.
-  - [ ] Default deny; return a clean Centrifugo error on denial.
-- [ ] Implement `POST /auth/publish` for client broadcasts:
-  - [ ] Apply the same channel checks.
-  - [ ] Add payload size and rate limits.
-  - [ ] Prefer server-side publish via the HTTP API for trusted services.
-- [ ] Implement short-lived authorization caching:
-  - [ ] Key by user, channel, and a claims/role version.
-  - [ ] TTL measured in seconds, not minutes.
-  - [ ] Clear or bypass on role changes.
-- [ ] Implement key rotation for the connection-token signing material.
-- [ ] Add unit tests for claims, expiry, anonymous access, cross-tenant denial, and malformed input.
-- [ ] Add integration tests against the live auth service.
-- [ ] Ensure logs never contain tokens, publishable keys, or full claims.
+- [x] Implement the service skeleton and health endpoint.
+- [x] Implement Supabase JWT validation:
+  - [x] Fetch and cache Supabase Auth JWKS.
+  - [x] Verify signature, expiry, issuer, and audience.
+  - [x] Support legacy HS256 only if required; otherwise document the limitation.
+  - [x] Reject `service_role` and unknown roles for client connections.
+- [x] Implement token issuance:
+  - [x] Authenticated user: `sub` = Supabase user UUID.
+  - [x] Anonymous: `sub` = empty string, only with a valid publishable key.
+  - [x] Include short `exp`, `iat`, `aud`, `iss`, `info`, and `meta`.
+  - [x] Never include secrets or service-role claims.
+- [x] Implement `POST /auth/token`:
+  - [x] Accept `apikey` for publishable/legacy anon keys.
+  - [x] Accept `Authorization: Bearer` for user sessions.
+  - [x] Set CORS headers for allowed origins.
+  - [x] Rate-limit by IP and user.
+- [x] Implement token refresh behavior compatible with Centrifugo SDK `getToken`.
+- [x] Implement `POST /auth/subscribe`:
+  - [x] Parse and validate the channel.
+  - [x] Reject unknown namespaces and malformed IDs.
+  - [x] Check user/tenant ownership.
+  - [x] Call `centrifugo.authorize(channel, claims)`; the live function ships with the Phase 4 migration, so Phase 3 uses the documented local fallback until `CENTRIFUGO_AUTH_DATABASE_URL` is set.
+  - [x] Default deny; return a clean Centrifugo error on denial.
+- [x] Implement `POST /auth/publish` for client broadcasts:
+  - [x] Apply the same channel checks.
+  - [x] Add payload size and rate limits.
+  - [x] Prefer server-side publish via the HTTP API for trusted services.
+- [x] Implement short-lived authorization caching:
+  - [x] Key by user, channel, and a claims/role version.
+  - [x] TTL measured in seconds, not minutes.
+  - [x] Clear or bypass on role changes.
+- [x] Implement key rotation for the connection-token signing material.
+- [x] Add unit tests for claims, expiry, anonymous access, cross-tenant denial, and malformed input.
+- [x] Add integration tests against the live auth service.
+- [x] Ensure logs never contain tokens, publishable keys, or full claims.
+
+Verification (2026-11-01):
+
+- `docker/volumes/centrifugo/auth/test/unit.test.js`: 12/12 passed (ES256/HS256 validation, expiry, audience, service-role and unknown-role rejection, channel parsing, default-deny authorization, DB fallback, token claims, JWKS cache/refresh, required JWKS URL, cache/rate limits, constant-time keys).
+- `docker/tests/test-centrifugo-auth.sh`: 39/39 passed against Envoy:
+  - legacy anon and publishable keys issue tokens; no key and invalid key return 401; service-role `apikey` and Bearer return 403; expired HS256 returns 401.
+  - user session issues a token with the Supabase `sub`, `authenticated` role, and `app_metadata.tenant_id`; token refresh returns a new token.
+  - allowed preflight returns 204 with the exact `SITE_URL` origin; a disallowed origin returns 403.
+  - user connects; matching tenant and `user:<self>` subscribe; cross-tenant and other-user subscribe, malformed tenant ID, cross-tenant publish, oversized publish, and anonymous publish are denied with 403; authenticated `public` publish succeeds.
+  - token IP and user rate limits return 429 after their configured windows; auth logs contain neither the session token nor the publishable key.
+- `docker/tests/test-centrifugo.sh`: 22/22 passed against Envoy after the CORS changes; token preflight is now 204, the origin is exact, and token without `apikey` is 401.
+- Kong: the disposable root container loaded `kong.yml` on `supabase_default`; the auth and gateway suites passed 39/39 and 22/22 against port 18000, including token CORS, rate limits, oversized publish rejection, and channel authorization. No root workaround was applied to the real Kong override.
+- The test scripts derive the gateway from `API_EXTERNAL_URL` or `SUPABASE_PUBLIC_URL`, the allowed CORS origin from `SITE_URL`, and the disallowed CORS origin from `SITE_URL` with a non-production host; they do not hardcode an environment URL. An explicit base URL argument still overrides the gateway.
+- Compose healthchecks contain no URL literal: the auth probe uses Node `http.get` host/port/path options and Centrifugo uses `nc -z` against its internal port.
+- CORS is handled by `centrifugo-auth`; the Envoy token route disables the virtual-host CORS filter, and the Kong `cors` plugin is removed. `service_role` and unknown roles are rejected before token signing. `SUPABASE_JWKS_URL` has no default and must be supplied explicitly; the unit suite covers the missing-value failure and JWKS cache refresh.
+- Key rotation was verified live: a disposable Centrifugo v6.10.2 accepted a connection token signed with the previous HMAC secret while the current secret remained active, and `checkconfig` accepted the rotation environment. Current tokens use HS256 until Ed25519 is revisited.
+- The local `API_EXTERNAL_URL` already includes `/auth/v1`; the auth config no longer appends a second `/auth/v1`, and the compose issuer list was cleaned to `${API_EXTERNAL_URL} supabase`.
+- Final re-run after the last auth image rebuild (2026-11-01): unit 12/12; Envoy auth 39/39 and gateway 22/22; disposable Kong auth 39/39 and gateway 22/22; key rotation accepted the previous-secret token. Baselines: 39/39 self-hosted, 56/56 auth keys, 13/13 container logs. `test-update.sh` remains 71 passed, 7 pre-existing failures.
+- Node 22.23.4 (local install) and `supabase/centrifugo-auth:0.1.0` are recorded in `docker/versions.md`; the image runs as `node`, read-only, with no published port.
 
 Acceptance: Valid users and anonymous clients connect; invalid, expired, cross-tenant, and service-role attempts are rejected; no auth secrets appear in logs.
 
@@ -853,5 +872,8 @@ sh tests/test-container-logs.sh
 | 2026-10-31 | Additive Envoy/Kong routes and a distinct Vector/Logflare source | Locked |
 | 2026-10-31 | Existing Studio Realtime Inspector stays on Supabase Realtime | Locked |
 | 2026-10-31 | Confirm official SDK vs thin Supabase-like adapter | Open |
-| 2026-10-31 | Confirm `centrifugo-auth` language and token signing | Open |
+| 2026-10-31 | Confirm `centrifugo-auth` language and token signing | Resolved: Node.js 22.23.4 ESM, HMAC-SHA256 with previous-key rotation; Ed25519 deferred |
 | 2026-10-31 | Pin `centrifugo/centrifugo:v6.10.2` | Resolved |
+| 2026-11-01 | Enforce final CORS policy in `centrifugo-auth`; disable per-route Envoy CORS and remove Kong `cors` | Locked |
+| 2026-11-01 | Phase 3 uses a local default-deny fallback until the Phase 4 `centrifugo.authorize` migration is applied | Locked |
+| 2026-11-01 | Rotate connection-token keys through Centrifugo previous-secret env vars; keep Ed25519 as a future option | Locked |

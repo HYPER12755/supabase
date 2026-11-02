@@ -60,6 +60,10 @@ cat >"$tmp_file" <<EOF
 # .env.centrifugo.old.
 
 CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY=$token_secret
+# To rotate the connection-token secret, set these to the previous secret and
+# a Unix expiry timestamp before replacing the current secret.
+# CENTRIFUGO_CLIENT_TOKEN_HMAC_PREVIOUS_SECRET_KEY=
+# CENTRIFUGO_CLIENT_TOKEN_HMAC_PREVIOUS_SECRET_KEY_VALID_UNTIL=
 CENTRIFUGO_HTTP_API_KEY=$http_api_key
 
 # Phase 3: uncomment when the centrifugo_auth role exists. Replace the host,

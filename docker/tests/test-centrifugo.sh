@@ -3,7 +3,7 @@
 # Test the Centrifugo gateway contract against a running self-hosted instance.
 #
 # Usage:
-#   sh test-centrifugo.sh              # Uses http://localhost:8000
+#   sh test-centrifugo.sh              # Uses API_EXTERNAL_URL from .env
 #   sh test-centrifugo.sh <base_url>   # Custom URL
 #
 # Prerequisites:
@@ -16,7 +16,17 @@
 
 set -e
 
-BASE_URL="${1:-http://localhost:8000}"
+read_env() {
+    grep "^$1=" .env | head -n 1 | cut -d= -f2- | tr -d '\r'
+}
+
+unquote() {
+    value="$1"
+    case "$value" in
+        \"*\") value="${value#\"}"; value="${value%\"}" ;;
+    esac
+    printf '%s' "$value"
+}
 
 if [ ! -f .env ]; then
     echo "Error: .env file not found. Run from the project directory."
@@ -34,6 +44,24 @@ for cmd in curl node; do
         exit 1
     fi
 done
+
+BASE_URL="${1:-}"
+SITE_URL=$(unquote "$(read_env SITE_URL)")
+SITE_URL="${SITE_URL%/}"
+if [ -z "$BASE_URL" ]; then
+    api_external_url=$(unquote "$(read_env API_EXTERNAL_URL)")
+    api_external_url="${api_external_url%/}"
+    BASE_URL="${api_external_url%/auth/v1}"
+fi
+if [ -z "$BASE_URL" ]; then
+    BASE_URL=$(unquote "$(read_env SUPABASE_PUBLIC_URL)")
+    BASE_URL="${BASE_URL%/}"
+fi
+if [ -z "$BASE_URL" ] || [ -z "$SITE_URL" ]; then
+    echo "Error: set API_EXTERNAL_URL or SUPABASE_PUBLIC_URL, and SITE_URL, in .env or pass a base URL."
+    exit 1
+fi
+DISALLOWED_ORIGIN=$(SITE_URL="$SITE_URL" node -e 'const url = new URL(process.env.SITE_URL); url.host = "disallowed.invalid"; process.stdout.write(url.origin)')
 
 ANON_KEY=$(grep '^ANON_KEY=' .env | cut -d= -f2-)
 CENTRIFUGO_HTTP_API_KEY=$(grep '^CENTRIFUGO_HTTP_API_KEY=' .env.centrifugo | cut -d= -f2-)
@@ -91,21 +119,13 @@ ws_protocol() {
 check_cors_origin() {
     test_name="$1"
     actual="$2"
-
-    case "$actual" in
-        "http://localhost:3000"|"*")
-            check "$test_name" "origin or wildcard" "origin or wildcard"
-            ;;
-        *)
-            check "$test_name" "origin or wildcard" "$actual"
-            ;;
-    esac
+    check "$test_name" "$SITE_URL" "$actual"
 }
 
 check_ws() {
     test_name="$1"
     path="$2"
-    origin="${3:-http://localhost:3000}"
+    origin="${3:-$SITE_URL}"
 
     code=$(ws_status "$BASE_URL$path" "$origin")
     check "$test_name -> 101" "101" "$code"
@@ -131,7 +151,7 @@ check_ws "primary WebSocket" "/centrifugo/v1/connection/websocket"
 check_ws "WebSocket alias" "/centrifugo/v1/websocket"
 check_ws "reserved Realtime alias" "/realtime/v1/connection/websocket"
 check "disallowed WebSocket origin -> 403" "403" \
-    "$(ws_status "$BASE_URL/centrifugo/v1/websocket" "https://evil.example")"
+    "$(ws_status "$BASE_URL/centrifugo/v1/websocket" "$DISALLOWED_ORIGIN")"
 
 echo ""
 echo "--- Centrifugo connect ---"
@@ -247,21 +267,21 @@ check "API publish result" '{"result":{}}' "$api_body"
 
 echo ""
 echo "--- Auth token CORS ---"
-check "token preflight -> 200" "200" \
+check "token preflight -> 204" "204" \
     "$(http_status "$BASE_URL/centrifugo/v1/auth/token" \
         -X OPTIONS \
-        -H 'Origin: http://localhost:3000' \
+        -H "Origin: $SITE_URL" \
         -H 'Access-Control-Request-Method: POST' \
         -H 'Access-Control-Request-Headers: authorization,apikey,content-type')"
 cors_origin=$(curl -s -D - -o /dev/null --max-time 5 \
     -X OPTIONS \
-    -H 'Origin: http://localhost:3000' \
+    -H "Origin: $SITE_URL" \
     -H 'Access-Control-Request-Method: POST' \
     "$BASE_URL/centrifugo/v1/auth/token" \
     | awk 'tolower($1) == "access-control-allow-origin:" { gsub("\r", "", $2); print $2 }' | tail -n 1 || true)
 check_cors_origin "token allow-origin" "$cors_origin"
-check "token service pending -> 503" "503" \
-    "$(http_status "$BASE_URL/centrifugo/v1/auth/token")"
+check "token without apikey -> 401" "401" \
+    "$(http_status "$BASE_URL/centrifugo/v1/auth/token" -X POST)"
 
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="

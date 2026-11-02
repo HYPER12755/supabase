@@ -279,8 +279,6 @@ services:
         strip_path: true
         paths:
           - /centrifugo/v1/auth/token
-    plugins:
-      - name: cors
 
   ## Centrifugo HTTP API. Centrifugo validates X-API-Key; do not add key-auth.
   ## No CORS plugin: this is server-to-server only.
