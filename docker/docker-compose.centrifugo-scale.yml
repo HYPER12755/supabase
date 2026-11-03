@@ -1,0 +1,144 @@
+# Centrifugo beta scale-out overlay. Enable after the base Centrifugo overlay:
+#   sh utils/generate-centrifugo-keys.sh --scale-only
+#   sh run.sh config add centrifugo
+#   sh run.sh config add centrifugo-scale
+#   sh run.sh start
+#
+# This overlay is optional. It adds a second Centrifugo node and a local Redis
+# reference service. The default Centrifugo overlay remains memory-only.
+#
+# Production deployments should use an external Redis service with its own
+# authentication, TLS, persistence, and failover policy. Point the engine,
+# broker, and presence-manager addresses in .env.centrifugo-scale at that
+# service and replace or disable the bundled redis service.
+
+services:
+  redis:
+    container_name: supabase-centrifugo-redis
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    user: redis
+    env_file:
+      - .env.centrifugo-scale
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_ENGINE_REDIS_PASSWORD:?CENTRIFUGO_ENGINE_REDIS_PASSWORD is required}"
+          conf=$$(mktemp /tmp/redis.XXXXXX)
+          {
+            printf 'bind 0.0.0.0\n'
+            printf 'protected-mode yes\n'
+            printf 'port 6379\n'
+            printf 'requirepass %s\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf 'save ""\n'
+            printf 'appendonly no\n'
+            printf 'dir /tmp\n'
+          } > "$$conf"
+          exec redis-server "$$conf"
+    expose:
+      - "6379"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=\"$$CENTRIFUGO_ENGINE_REDIS_PASSWORD\" redis-cli --no-auth-warning ping | grep -q PONG"
+        ]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+
+  centrifugo:
+    env_file:
+      - .env.centrifugo
+      - .env.centrifugo-scale
+    depends_on:
+      centrifugo-auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  centrifugo-outbox:
+    environment:
+      CENTRIFUGO_HTTP_API_URL: "http://centrifugo:8000"
+      CENTRIFUGO_OUTBOX_ORDERING_MODE: "partitioned"
+      CENTRIFUGO_OUTBOX_PARTITION_COUNT: "2"
+      CENTRIFUGO_OUTBOX_PARTITION_INDEX: "0"
+      CENTRIFUGO_OUTBOX_WORKER_ID: "centrifugo-outbox-0"
+      CENTRIFUGO_OUTBOX_METRICS_PORT: "9100"
+    depends_on:
+      centrifugo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  centrifugo-outbox-2:
+    container_name: supabase-centrifugo-outbox-2
+    image: supabase/centrifugo-outbox:0.1.0
+    build:
+      context: ./volumes/centrifugo/outbox
+    restart: unless-stopped
+    read_only: true
+    stop_grace_period: 20s
+    env_file:
+      - .env.centrifugo
+    environment:
+      CENTRIFUGO_HTTP_API_URL: "http://centrifugo:8000"
+      CENTRIFUGO_OUTBOX_ORDERING_MODE: "partitioned"
+      CENTRIFUGO_OUTBOX_PARTITION_COUNT: "2"
+      CENTRIFUGO_OUTBOX_PARTITION_INDEX: "1"
+      CENTRIFUGO_OUTBOX_WORKER_ID: "centrifugo-outbox-1"
+      CENTRIFUGO_OUTBOX_METRICS_PORT: "9100"
+    depends_on:
+      centrifugo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "9100"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get({host:'127.0.0.1',port:9100,path:'/health'},(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  centrifugo-2:
+    container_name: supabase-centrifugo-2
+    image: centrifugo/centrifugo:v6.10.2
+    restart: unless-stopped
+    depends_on:
+      centrifugo-auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.centrifugo
+      - .env.centrifugo-scale
+    environment:
+      CENTRIFUGO_CLIENT_ALLOWED_ORIGINS: "${SITE_URL} ${SUPABASE_PUBLIC_URL}"
+    volumes:
+      - ./volumes/centrifugo/config.json:/centrifugo/config.json:ro,z
+    command: ["centrifugo", "-c", "/centrifugo/config.json"]
+    expose:
+      - "8000"
+    networks:
+      default:
+        aliases:
+          - centrifugo
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "nc -z 127.0.0.1 8000"
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 5
+      start_period: 10s

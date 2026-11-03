@@ -1,0 +1,228 @@
+# Centrifugo beta Redis Sentinel failover overlay. Enable after the scale overlay:
+#   sh utils/generate-centrifugo-keys.sh --scale-only
+#   sh run.sh config add centrifugo
+#   sh run.sh config add centrifugo-scale
+#   sh run.sh config add centrifugo-scale-ha
+#   sh run.sh start
+#   sh tests/test-centrifugo-scale-ha.sh
+#
+# This overlay keeps the existing `redis` service as the initial master and adds
+# a replica, three Sentinels, and an HAProxy TCP proxy. Sentinels promote the
+# replica on failure; Centrifugo connects through the proxy, which health-checks
+# Redis ROLE and only routes to the current master. This is still a local
+# reference: Redis data is not persisted, Sentinel has no authentication, and
+# none of the services publish ports.
+
+services:
+  redis:
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_ENGINE_REDIS_PASSWORD:?CENTRIFUGO_ENGINE_REDIS_PASSWORD is required}"
+          conf=$$(mktemp /tmp/redis.XXXXXX)
+          {
+            printf 'bind 0.0.0.0\n'
+            printf 'protected-mode yes\n'
+            printf 'port 6379\n'
+            printf 'requirepass %s\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf 'save ""\n'
+            printf 'appendonly no\n'
+            printf 'dir /tmp\n'
+          } > "$$conf"
+          exec redis-server "$$conf"
+
+  redis-replica:
+    container_name: supabase-centrifugo-redis-replica
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    user: redis
+    env_file:
+      - .env.centrifugo-scale
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_ENGINE_REDIS_PASSWORD:?CENTRIFUGO_ENGINE_REDIS_PASSWORD is required}"
+          conf=$$(mktemp /tmp/redis.XXXXXX)
+          {
+            printf 'bind 0.0.0.0\n'
+            printf 'protected-mode yes\n'
+            printf 'port 6379\n'
+            printf 'requirepass %s\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf 'masterauth %s\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf 'replicaof redis 6379\n'
+            printf 'save ""\n'
+            printf 'appendonly no\n'
+            printf 'dir /tmp\n'
+          } > "$$conf"
+          exec redis-server "$$conf"
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "6379"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=\"$$CENTRIFUGO_ENGINE_REDIS_PASSWORD\" redis-cli --no-auth-warning ping | grep -q PONG"
+        ]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 10s
+
+  redis-sentinel-1:
+    container_name: supabase-centrifugo-redis-sentinel-1
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    user: redis
+    env_file:
+      - .env.centrifugo-scale
+    command: &sentinel-command
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_ENGINE_REDIS_PASSWORD:?CENTRIFUGO_ENGINE_REDIS_PASSWORD is required}"
+          conf=$$(mktemp /tmp/sentinel.XXXXXX)
+          {
+            printf 'bind 0.0.0.0\n'
+            printf 'protected-mode no\n'
+            printf 'port 26379\n'
+            printf 'sentinel resolve-hostnames yes\n'
+            printf 'sentinel monitor mymaster redis 6379 2\n'
+            printf 'sentinel auth-pass mymaster %s\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf 'sentinel down-after-milliseconds mymaster 3000\n'
+            printf 'sentinel failover-timeout mymaster 10000\n'
+            printf 'sentinel parallel-syncs mymaster 1\n'
+          } > "$$conf"
+          exec redis-server "$$conf" --sentinel
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    expose:
+      - "26379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+
+  redis-sentinel-2:
+    container_name: supabase-centrifugo-redis-sentinel-2
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    user: redis
+    env_file:
+      - .env.centrifugo-scale
+    command: *sentinel-command
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    expose:
+      - "26379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+
+  redis-sentinel-3:
+    container_name: supabase-centrifugo-redis-sentinel-3
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    user: redis
+    env_file:
+      - .env.centrifugo-scale
+    command: *sentinel-command
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    expose:
+      - "26379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+
+  redis-proxy:
+    container_name: supabase-centrifugo-redis-proxy
+    image: haproxy:3.0.5-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.centrifugo-scale
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          : "$${CENTRIFUGO_ENGINE_REDIS_PASSWORD:?CENTRIFUGO_ENGINE_REDIS_PASSWORD is required}"
+          conf=$$(mktemp /tmp/haproxy.XXXXXX)
+          {
+            printf 'global\n'
+            printf '  log stdout format raw local0\n'
+            printf 'defaults\n'
+            printf '  mode tcp\n'
+            printf '  timeout connect 2s\n'
+            printf '  timeout client 30s\n'
+            printf '  timeout server 30s\n'
+            printf '  retries 3\n'
+            printf 'frontend redis\n'
+            printf '  bind *:6379\n'
+            printf '  default_backend redis\n'
+            printf 'backend redis\n'
+            printf '  option tcp-check\n'
+            printf '  tcp-check connect\n'
+            printf '  tcp-check send "AUTH %s\\r\\n"\n' "$$CENTRIFUGO_ENGINE_REDIS_PASSWORD"
+            printf '  tcp-check expect string +OK\n'
+            printf '  tcp-check send "ROLE\\r\\n"\n'
+            printf '  tcp-check expect string master\n'
+            printf '  server redis-master redis:6379 check inter 500ms fall 2 rise 2 on-marked-down shutdown-sessions\n'
+            printf '  server redis-replica redis-replica:6379 check inter 500ms fall 2 rise 2 on-marked-down shutdown-sessions\n'
+          } > "$$conf"
+          exec haproxy -W -db -f "$$conf"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6379"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+
+  centrifugo:
+    environment:
+      CENTRIFUGO_ENGINE_REDIS_ADDRESS: "redis://redis-proxy:6379"
+      CENTRIFUGO_BROKER_REDIS_ADDRESS: "redis://redis-proxy:6379"
+      CENTRIFUGO_PRESENCE_MANAGER_REDIS_ADDRESS: "redis://redis-proxy:6379"
+    depends_on:
+      redis-proxy:
+        condition: service_healthy
+
+  centrifugo-2:
+    environment:
+      CENTRIFUGO_ENGINE_REDIS_ADDRESS: "redis://redis-proxy:6379"
+      CENTRIFUGO_BROKER_REDIS_ADDRESS: "redis://redis-proxy:6379"
+      CENTRIFUGO_PRESENCE_MANAGER_REDIS_ADDRESS: "redis://redis-proxy:6379"
+    depends_on:
+      redis-proxy:
+        condition: service_healthy

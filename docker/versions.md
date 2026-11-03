@@ -1,5 +1,9 @@
 # Docker image version updates in docker-compose.yml
 
+## 2026-11-03
+- redis:7.4.2-alpine (new; Centrifugo beta scale/HA overlays only)
+- haproxy:3.0.5-alpine (new; Centrifugo beta HA overlay only)
+
 ## 2026-11-02
 - supabase/centrifugo-outbox:0.1.0 (new; Centrifugo beta overlay only; node:22.23.4-alpine base)
 

@@ -13,6 +13,9 @@ volumes/functions/hello/**
 .env.centrifugo
 .env.centrifugo.old
 .env.centrifugo.tmp.*
+.env.centrifugo-scale
+.env.centrifugo-scale.old
+.env.centrifugo-scale.tmp.*
 test.http
 docker-compose.override.yml
 .supabase-version

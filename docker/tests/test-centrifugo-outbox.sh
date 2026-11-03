@@ -50,6 +50,8 @@ if [ -z "$ANON_KEY" ] || [ -z "$SERVICE_ROLE_KEY" ] || [ -z "$BASE_URL" ]; then
 fi
 
 OUTBOX_CONTAINER="supabase-centrifugo-outbox"
+OUTBOX_CONTAINER_2="supabase-centrifugo-outbox-2"
+OUTBOX_CONTAINERS="$OUTBOX_CONTAINER"
 DB_CONTAINER="supabase-db"
 TEST_TABLE="centrifugo_outbox_test"
 TEST_TENANT_ID="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -62,6 +64,21 @@ if ! docker inspect "$OUTBOX_CONTAINER" >/dev/null 2>&1; then
     echo "SKIP: $OUTBOX_CONTAINER is not running."
     exit 0
 fi
+if docker inspect "$OUTBOX_CONTAINER_2" >/dev/null 2>&1; then
+    OUTBOX_CONTAINERS="$OUTBOX_CONTAINERS $OUTBOX_CONTAINER_2"
+fi
+
+start_outboxes() {
+    for container in $OUTBOX_CONTAINERS; do
+        docker start "$container" >/dev/null 2>&1 || true
+    done
+}
+
+stop_outboxes() {
+    for container in $OUTBOX_CONTAINERS; do
+        docker stop "$container" >/dev/null 2>&1 || true
+    done
+}
 
 psql_db() {
     docker exec -i "$DB_CONTAINER" psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -Atq "$@"
@@ -73,7 +90,7 @@ clean_test_rows() {
 }
 
 cleanup() {
-    docker start "$OUTBOX_CONTAINER" >/dev/null 2>&1 || true
+    start_outboxes
     psql_db -c "DROP TRIGGER IF EXISTS ${TEST_TABLE}_changes ON public.${TEST_TABLE}" >/dev/null 2>&1 || true
     psql_db -c "DROP TABLE IF EXISTS public.${TEST_TABLE}" >/dev/null 2>&1 || true
     psql_db -c "DELETE FROM centrifugo.full_payload_tables WHERE schema_name = 'public' AND table_name = '${TEST_TABLE}'" >/dev/null 2>&1 || true
@@ -151,7 +168,7 @@ if [ -z "$USER_TOKEN" ]; then
     exit 1
 fi
 
-node_result=$(TOKEN="$USER_TOKEN" BASE_URL="$BASE_URL" TENANT="$TEST_TENANT_ID" OTHER_TENANT="$OTHER_TENANT_ID" TABLE="$TEST_TABLE" node - <<'NODE'
+node_result=$(TOKEN="$USER_TOKEN" BASE_URL="$BASE_URL" TENANT="$TEST_TENANT_ID" OTHER_TENANT="$OTHER_TENANT_ID" TABLE="$TEST_TABLE" OUTBOX_CONTAINERS="$OUTBOX_CONTAINERS" node - <<'NODE'
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 
@@ -179,6 +196,20 @@ function sql(statement) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const outboxContainers = process.env.OUTBOX_CONTAINERS.split(' ').filter(Boolean)
+
+function stopOutboxes() {
+  for (const container of outboxContainers) {
+    execFileSync('docker', ['stop', container], { stdio: 'ignore' })
+  }
+}
+
+function startOutboxes() {
+  for (const container of outboxContainers) {
+    execFileSync('docker', ['start', container], { stdio: 'ignore' })
+  }
 }
 
 const channel = `tenant:${process.env.TENANT}:table:${process.env.TABLE}`
@@ -277,14 +308,14 @@ ws.addEventListener('open', async () => {
     assert.ok(publications[0].message_id)
     const insertMessageId = publications[0].message_id
 
-    execFileSync('docker', ['stop', 'supabase-centrifugo-outbox'], { stdio: 'ignore' })
+    stopOutboxes()
     sql(`UPDATE public.${process.env.TABLE} SET body = 'update-body' WHERE tenant_id = '${process.env.TENANT}'`)
     await sleep(500)
     const pendingAfterStop = Number(
       sql(`SELECT count(*) FROM centrifugo.outbox WHERE published_at IS NULL AND channel = '${channel}'`)
     )
     assert.equal(pendingAfterStop, 1, 'pending row was not preserved while stopped')
-    execFileSync('docker', ['start', 'supabase-centrifugo-outbox'], { stdio: 'ignore' })
+    startOutboxes()
     await waitForPublications(2)
     assert.equal(publications[1].event, 'update')
     assert.equal(publications[1].record, undefined)
@@ -335,7 +366,7 @@ check "consumer restart preserves pending rows" "true" "$(printf '%s' "$node_res
 check "cross-tenant row is not published to the wrong channel" "true" "$(printf '%s' "$node_result" | jq -r '.crossTenantBlocked // false' 2>/dev/null || echo false)"
 
 if [ "$node_result" = "failed" ]; then
-    docker start "$OUTBOX_CONTAINER" >/dev/null 2>&1 || true
+    start_outboxes
 fi
 
 echo ""
@@ -347,7 +378,7 @@ check "duplicate send keeps one row" "1" "$psql_json"
 
 echo ""
 echo "--- Dead-letter path ---"
-docker stop "$OUTBOX_CONTAINER" >/dev/null 2>&1 || true
+stop_outboxes
 clean_test_rows
 psql_db -c "SELECT centrifugo.send('public:outbox-poison', '{\"event\":\"test\"}'::jsonb, 'test')" >/dev/null
 NETWORK=$(docker inspect --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}{{end}}' "$OUTBOX_CONTAINER" 2>/dev/null || true)
@@ -360,7 +391,7 @@ if [ -n "$NETWORK" ]; then
         supabase/centrifugo-outbox:0.1.0 \
         sh -c 'timeout 8 node src/server.js' >/dev/null 2>&1 || true
 fi
-docker start "$OUTBOX_CONTAINER" >/dev/null 2>&1 || true
+start_outboxes
 dead_count=$(psql_db -c "SELECT count(*) FROM centrifugo.dead_letter WHERE channel = 'public:outbox-poison'")
 outbox_count=$(psql_db -c "SELECT count(*) FROM centrifugo.outbox WHERE published_at IS NULL AND channel = 'public:outbox-poison'")
 check "poison message moved to dead-letter" "1" "$dead_count"

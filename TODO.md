@@ -88,6 +88,7 @@ Resolve these before the phase that depends on them.
 4. Redis deployment (before Phase 6)
    - Recommendation: external Redis for production; no Redis in the default local overlay.
    - If bundled for local testing, pin the image and keep it behind a separate scale overlay.
+   - Resolved locally: `redis:7.4.2-alpine` behind `docker-compose.centrifugo-scale.yml`; production remains external.
 5. Postgres change payload mode (before Phase 4)
    - Recommendation: notification-only by default. Full row payload is opt-in per table after a privacy review.
 6. `/realtime/v1/connection/*` timing (before Phase 2)
@@ -594,26 +595,30 @@ Acceptance: The compatibility matrix is accurate and covered by tests; no channe
 
 Description: Make Centrifugo horizontally scalable without changing the public contract.
 
-- [ ] Add a Redis scale overlay or environment profile.
-- [ ] Configure Centrifugo engine/broker/presence manager for Redis.
-- [ ] Pin the Redis image if bundled; prefer external Redis for production.
-- [ ] Add Redis authentication and TLS options.
-- [ ] Run at least two Centrifugo nodes behind Envoy/Kong.
-- [ ] Verify no sticky sessions are required.
-- [ ] Verify WebSocket connections survive a node restart via reconnect.
-- [ ] Verify history/recovery across nodes.
-- [ ] Verify subscribe proxy calls work from every node.
-- [ ] Verify outbox consumers do not duplicate work.
-- [ ] Test Redis failover and reconnect behavior.
-- [ ] Run load tests:
-  - [ ] Reconnect storm.
-  - [ ] Fan-out to many subscribers.
-  - [ ] Large channel count per user.
-  - [ ] Outbox throughput.
-- [ ] Record capacity limits and recommended node sizing.
-- [ ] Document local vs production topology.
+- [x] Add a Redis scale overlay or environment profile.
+- [x] Configure Centrifugo engine/broker/presence manager for Redis.
+- [x] Pin the Redis image if bundled; prefer external Redis for production.
+- [x] Add Redis authentication and TLS options.
+- [x] Run at least two Centrifugo nodes behind Envoy/Kong.
+- [x] Verify no sticky sessions are required.
+- [x] Verify WebSocket connections survive a node restart via reconnect.
+- [x] Verify history/recovery across nodes.
+- [x] Verify subscribe proxy calls work from every node.
+- [x] Verify outbox consumers do not duplicate work.
+- [x] Test Redis reconnect behavior after a local Redis restart.
+- [x] Test local Redis Sentinel failover with a master/replica/Sentinel topology and a master-only proxy.
+- [ ] Test external Redis HA failover with a production-like topology.
+- [x] Run load tests:
+  - [x] Reconnect storm.
+  - [x] Fan-out to many subscribers.
+  - [x] Large channel count per user.
+  - [x] Outbox throughput.
+- [x] Record capacity limits and recommended node sizing.
+- [x] Document local vs production topology.
 
 Acceptance: Losing one Centrifugo node does not lose data or permanently disconnect clients; load targets are documented and met.
+
+Status: local acceptance met on 2026-11-03 (31 scale checks, 10 load checks, 19 HA checks; gateway/auth/features/outbox suites also pass). The HA reference uses a master-only HAProxy that closes sessions to a demoted backend; a publish during the promotion window can still be lost and the HA test retries until delivery. External Redis HA failover remains an operational validation.
 
 ### Phase 7 — Observability and Operations
 
