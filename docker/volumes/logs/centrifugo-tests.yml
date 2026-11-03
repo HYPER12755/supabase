@@ -1,0 +1,62 @@
+tests:
+  - name: "routes Centrifugo containers to the Centrifugo pipeline"
+    inputs:
+      - insert_at: "router"
+        type: "log"
+        log_fields:
+          appname: "supabase-centrifugo-auth"
+          event_message: '{"msg":"authz_denied"}'
+    outputs:
+      - extract_from: "router.centrifugo"
+        conditions:
+          - type: "vrl"
+            source: |
+              assert_eq!(.appname, "supabase-centrifugo-auth")
+
+  - name: "drops health-check request logs"
+    no_outputs_from: ["centrifugo_logs_filtered"]
+    inputs:
+      - insert_at: "centrifugo_logs_filtered"
+        type: "log"
+        log_fields:
+          appname: "supabase-centrifugo-auth"
+          event_message: '{"msg":"http_request","path":"/health"}'
+
+  - name: "parses auth JSON and keeps audit fields"
+    inputs:
+      - insert_at: "centrifugo_logs"
+        type: "log"
+        log_fields:
+          appname: "supabase-centrifugo-auth"
+          event_message: '{"ts":"2026-11-03T12:00:00.000Z","level":"info","msg":"authz_denied","action":"subscribe","reason":"not_allowed","channel":"tenant:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:table:messages","user":"11111111-1111-4111-8111-111111111111"}'
+    outputs:
+      - extract_from: "centrifugo_logs"
+        conditions:
+          - type: "vrl"
+            source: |
+              assert_eq!(.metadata.service, "auth")
+              assert_eq!(.metadata.instance, "supabase-centrifugo-auth")
+              assert_eq!(.event_message, "authz_denied")
+              assert_eq!(.metadata.action, "subscribe")
+              assert_eq!(.metadata.reason, "not_allowed")
+              assert_eq!(.metadata.channel, "tenant:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:table:messages")
+              assert_eq!(.metadata.user, "11111111-1111-4111-8111-111111111111")
+              assert_eq!(.metadata.level, "info")
+              assert!(!exists(.metadata.msg))
+
+  - name: "keeps outbox text logs and tags the instance"
+    inputs:
+      - insert_at: "centrifugo_logs"
+        type: "log"
+        log_fields:
+          appname: "supabase-centrifugo-outbox-2"
+          event_message: "outbox pending 5"
+    outputs:
+      - extract_from: "centrifugo_logs"
+        conditions:
+          - type: "vrl"
+            source: |
+              assert_eq!(.metadata.service, "outbox")
+              assert_eq!(.metadata.instance, "supabase-centrifugo-outbox-2")
+              assert_eq!(.event_message, "outbox pending 5")
+              assert!(!exists(.metadata.parsed))

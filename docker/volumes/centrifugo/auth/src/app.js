@@ -14,6 +14,7 @@ import {
   setCorsHeaders,
 } from './http.js'
 import { isUuid } from './identifiers.js'
+import { Metrics } from './metrics.js'
 import { RateLimiter } from './rate-limit.js'
 import { verifySupabaseToken } from './supabase-token.js'
 
@@ -34,7 +35,21 @@ function safeErrorFields(error) {
   }
 }
 
-export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date.now() }) {
+function metricPath(path) {
+  if (['/auth/token', '/auth/subscribe', '/auth/publish', '/health', '/metrics'].includes(path)) {
+    return path
+  }
+  return '/other'
+}
+
+export function createApp({
+  config,
+  logger,
+  jwks,
+  dbAuthorizer,
+  metrics = new Metrics(),
+  now = () => Date.now(),
+}) {
   const authzCache = new AuthzCache({
     ttlSeconds: config.authzCacheSeconds,
     version: config.authzCacheVersion,
@@ -93,6 +108,16 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
       return null
     }
     if (body.user && !isUuid(body.user)) {
+      metrics.inc('centrifugo_auth_authorization_decisions_total', {
+        action,
+        decision: 'denied',
+      })
+      logger.info('authz_denied', {
+        action,
+        reason: 'invalid_user',
+        channel: body.channel,
+        user: body.user,
+      })
       proxyError(res, 403, 'permission denied')
       return null
     }
@@ -109,6 +134,7 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
   async function handleToken(req, res) {
     const origin = setCorsHeaders(req, res, config.allowedOriginSet)
     if (!origin.allowed) {
+      metrics.inc('centrifugo_auth_token_failures_total', { reason: 'origin_not_allowed' })
       sendJson(res, 403, { error: 'origin_not_allowed', message: 'origin not allowed' })
       return
     }
@@ -123,6 +149,8 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
 
     const ipLimit = tokenIpLimiter.consume(`ip:${getClientIp(req, config.trustProxy)}`)
     if (!ipLimit.allowed) {
+      metrics.inc('centrifugo_auth_rate_limited_total', { scope: 'token_ip' })
+      metrics.inc('centrifugo_auth_token_failures_total', { reason: 'rate_limit_exceeded' })
       sendJson(
         res,
         429,
@@ -167,6 +195,8 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
     if (user) {
       const userLimit = tokenUserLimiter.consume(`user:${user.sub}`)
       if (!userLimit.allowed) {
+        metrics.inc('centrifugo_auth_rate_limited_total', { scope: 'token_user' })
+        metrics.inc('centrifugo_auth_token_failures_total', { reason: 'rate_limit_exceeded' })
         sendJson(
           res,
           429,
@@ -189,6 +219,9 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
       nowSeconds: Math.floor(now() / 1000),
     })
 
+    metrics.inc('centrifugo_auth_token_issued_total', {
+      role: user ? 'authenticated' : 'anonymous',
+    })
     sendJson(res, 200, {
       token: signed.token,
       token_type: 'Bearer',
@@ -209,27 +242,57 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
 
     const limit = authzLimiter.consume(`authz:${context.user || 'anon'}`)
     if (!limit.allowed) {
-      logger.info('authz_rate_limited', { action: 'subscribe' })
+      metrics.inc('centrifugo_auth_rate_limited_total', { scope: 'authz' })
+      logger.info('authz_rate_limited', {
+        action: 'subscribe',
+        channel: context.channel,
+        user: context.user || '',
+      })
       proxyError(res, 429, 'rate limit exceeded')
       return
     }
 
+    const decisionStartedAt = now()
     const decision = await decisionFor(context)
+    metrics.observe(
+      'centrifugo_auth_authorization_duration_seconds',
+      (now() - decisionStartedAt) / 1000,
+      { action: 'subscribe' }
+    )
     if (decision.allowed) {
+      metrics.inc('centrifugo_auth_authorization_decisions_total', {
+        action: 'subscribe',
+        decision: 'allowed',
+      })
       sendJson(res, 200, { result: {} })
       return
     }
 
     if (decision.error) {
+      metrics.inc('centrifugo_auth_authorization_decisions_total', {
+        action: 'subscribe',
+        decision: 'error',
+      })
       logger.error('authz_database_error', {
         action: 'subscribe',
+        channel: context.channel,
+        user: context.user || '',
         ...safeErrorFields(decision.error),
       })
       proxyError(res, 503, 'authorization unavailable')
       return
     }
 
-    logger.info('authz_denied', { action: 'subscribe', reason: decision.reason })
+    metrics.inc('centrifugo_auth_authorization_decisions_total', {
+      action: 'subscribe',
+      decision: 'denied',
+    })
+    logger.info('authz_denied', {
+      action: 'subscribe',
+      reason: decision.reason,
+      channel: context.channel,
+      user: context.user || '',
+    })
     proxyError(res, 403, 'permission denied')
   }
 
@@ -249,34 +312,68 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
       payloadBytes = Math.max(payloadBytes, Buffer.byteLength(body.b64data, 'base64'))
     }
     if (payloadBytes > config.maxPublishBytes) {
-      logger.info('publish_rejected', { reason: 'payload_too_large' })
+      metrics.inc('centrifugo_auth_publish_rejected_total', { reason: 'payload_too_large' })
+      logger.info('publish_rejected', {
+        reason: 'payload_too_large',
+        channel: context.channel,
+        user: context.user || '',
+      })
       proxyError(res, 413, 'payload too large')
       return
     }
 
     const limit = publishLimiter.consume(`publish:${context.user || 'anon'}`)
     if (!limit.allowed) {
-      logger.info('publish_rate_limited', {})
+      metrics.inc('centrifugo_auth_rate_limited_total', { scope: 'publish' })
+      logger.info('publish_rate_limited', {
+        channel: context.channel,
+        user: context.user || '',
+      })
       proxyError(res, 429, 'rate limit exceeded')
       return
     }
 
+    const decisionStartedAt = now()
     const decision = await decisionFor(context)
+    metrics.observe(
+      'centrifugo_auth_authorization_duration_seconds',
+      (now() - decisionStartedAt) / 1000,
+      { action: 'publish' }
+    )
     if (decision.allowed) {
+      metrics.inc('centrifugo_auth_authorization_decisions_total', {
+        action: 'publish',
+        decision: 'allowed',
+      })
       sendJson(res, 200, { result: {} })
       return
     }
 
     if (decision.error) {
+      metrics.inc('centrifugo_auth_authorization_decisions_total', {
+        action: 'publish',
+        decision: 'error',
+      })
       logger.error('authz_database_error', {
         action: 'publish',
+        channel: context.channel,
+        user: context.user || '',
         ...safeErrorFields(decision.error),
       })
       proxyError(res, 503, 'authorization unavailable')
       return
     }
 
-    logger.info('authz_denied', { action: 'publish', reason: decision.reason })
+    metrics.inc('centrifugo_auth_authorization_decisions_total', {
+      action: 'publish',
+      decision: 'denied',
+    })
+    logger.info('authz_denied', {
+      action: 'publish',
+      reason: decision.reason,
+      channel: context.channel,
+      user: context.user || '',
+    })
     proxyError(res, 403, 'permission denied')
   }
 
@@ -291,16 +388,38 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
     }
 
     res.on('finish', () => {
-      if (path === '/health') return
+      const durationMs = now() - startedAt
+      if (path !== '/health' && path !== '/metrics') {
+        const labels = { method: req.method, path: metricPath(path) }
+        metrics.inc('centrifugo_auth_http_requests_total', {
+          ...labels,
+          status: String(res.statusCode),
+        })
+        metrics.observe('centrifugo_auth_http_request_duration_seconds', durationMs / 1000, labels)
+      }
+      if (path === '/health' || path === '/metrics') return
       logger.info('http_request', {
         method: req.method,
         path,
         status: res.statusCode,
-        duration_ms: now() - startedAt,
+        duration_ms: durationMs,
       })
     })
 
     try {
+      if (path === '/metrics') {
+        if (req.method !== 'GET') {
+          methodNotAllowed(res, 'GET')
+          return
+        }
+        res.writeHead(200, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+        })
+        res.end(metrics.render())
+        return
+      }
+
       if (path === '/health') {
         if (req.method !== 'GET') {
           methodNotAllowed(res, 'GET')
@@ -327,6 +446,12 @@ export function createApp({ config, logger, jwks, dbAuthorizer, now = () => Date
 
       sendJson(res, 404, { error: 'not_found', message: 'not found' })
     } catch (error) {
+      if (path === '/auth/token') {
+        metrics.inc('centrifugo_auth_token_failures_total', {
+          reason: error instanceof HttpError ? error.code : 'internal_error',
+        })
+      }
+
       if (error instanceof HttpError) {
         logger.info('request_denied', {
           method: req.method,

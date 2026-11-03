@@ -13,7 +13,7 @@ if [ ! -f .env.centrifugo-scale ]; then
     echo "Error: .env.centrifugo-scale file not found. Enable the scale overlay first."
     exit 1
 fi
-for cmd in curl jq docker; do
+for cmd in curl jq docker node; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: $cmd not found."
         exit 1
@@ -645,8 +645,159 @@ check "node 2 subscribe proxy works after restart" "true" "$(printf '%s' "$resta
 check "history survives node restart" "true" "$(printf '%s' "$restart_result" | jq -r '.historyAfterNodeRestart // false' 2>/dev/null || printf 'false')"
 
 echo "--- Redis restart and reconnect ---"
-docker restart supabase-centrifugo-redis >/dev/null
+redis_existing_result=$(BASE_URL="$BASE_URL" CENTRIFUGO_HTTP_API_KEY="$CENTRIFUGO_HTTP_API_KEY" USER_TOKEN="$USER_TOKEN" node - <<'NODE'
+const assert = require('node:assert/strict')
+const { execFileSync } = require('node:child_process')
+
+const gateway = process.env.BASE_URL.replace(/\/$/, '')
+const apiKey = process.env.CENTRIFUGO_HTTP_API_KEY
+const token = process.env.USER_TOKEN
+const channel = `public:scale-redis-existing-${Date.now()}`
+const wsUrl = new URL('/centrifugo/v1/connection/websocket', gateway)
+wsUrl.protocol = gateway.startsWith('https:') ? 'wss:' : 'ws:'
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function redisHealth() {
+  try {
+    return execFileSync(
+      'docker',
+      ['inspect', '--format', '{{.State.Health.Status}}', 'supabase-centrifugo-redis'],
+      { encoding: 'utf8' }
+    ).trim()
+  } catch {
+    return ''
+  }
+}
+
+function parseMessages(raw) {
+  const messages = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') { if (depth === 0) start = i; depth += 1 }
+    if (ch === '}') {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        messages.push(JSON.parse(raw.slice(start, i + 1)))
+        start = -1
+      }
+    }
+  }
+  return messages
+}
+
+const ws = new WebSocket(wsUrl, 'centrifuge-json')
+const pushes = []
+const pending = new Map()
+let nextId = 1
+let finished = false
+const timer = setTimeout(() => process.exit(1), 120000)
+
+function send(command) {
+  const id = nextId++
+  ws.send(JSON.stringify({ id, ...command }))
+  return new Promise((resolve) => pending.set(id, resolve))
+}
+
+async function waitForPush(predicate, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const found = pushes.find(predicate)
+    if (found) return found
+    await sleep(25)
+  }
+  throw new Error('timed out waiting for push')
+}
+
+ws.addEventListener('message', (event) => {
+  for (const message of parseMessages(String(event.data))) {
+    if (!message.id && !message.push && Object.keys(message).length === 0) {
+      ws.send('{}')
+      continue
+    }
+    const entry = pending.get(message.id)
+    if (entry) {
+      pending.delete(message.id)
+      entry(message)
+    }
+    if (message.push) pushes.push(message.push)
+  }
+})
+
+ws.addEventListener('error', () => process.exit(1))
+ws.addEventListener('close', (event) => {
+  if (finished) return
+  console.error(`websocket closed: ${event.code}`)
+  process.exit(1)
+})
+
+async function main() {
+  await new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true })
+    ws.addEventListener('error', () => reject(new Error('websocket error')), { once: true })
+  })
+
+  const connect = await send({ connect: { token } })
+  assert.ok(connect.connect && !connect.error, 'connect failed')
+  const subscribe = await send({ subscribe: { channel } })
+  assert.ok(subscribe.subscribe && !subscribe.error, 'subscribe failed')
+
+  execFileSync('docker', ['restart', 'supabase-centrifugo-redis'], { stdio: 'ignore' })
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (redisHealth() === 'healthy') break
+    await sleep(1000)
+  }
+  assert.equal(redisHealth(), 'healthy', 'redis did not become healthy')
+
+  const unsubscribe = await waitForPush((push) => push.unsubscribe, 60000)
+  assert.equal(unsubscribe.unsubscribe.code, 2500, 'unexpected unsubscribe code')
+
+  const resubscribe = await send({ subscribe: { channel } })
+  assert.ok(resubscribe.subscribe && !resubscribe.error, 'resubscribe failed')
+
+  const response = await fetch(`${gateway}/centrifugo/v1/api/publish`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
+    },
+    body: JSON.stringify({ channel, data: { source: 'existing-subscriber' } }),
+  })
+  assert.equal(response.status, 200, 'publish failed')
+  await waitForPush(
+    (push) => push.pub?.data?.source === 'existing-subscriber',
+    10000
+  )
+
+  finished = true
+  clearTimeout(timer)
+  ws.close(1000)
+  process.stdout.write(JSON.stringify({ unsubscribeCode: 2500, recovered: true }))
+}
+
+main().catch((error) => {
+  console.error(error.stack || error.message)
+  process.exit(1)
+})
+NODE
+) || redis_existing_result="failed"
+
 check "redis restarted healthy" "healthy" "$(wait_healthy supabase-centrifugo-redis && echo healthy || echo failed)"
+check "existing subscriber received unsubscribe 2500 after Redis restart" "2500" "$(printf '%s' "$redis_existing_result" | jq -r '.unsubscribeCode // 0' 2>/dev/null || printf '0')"
+check "existing subscriber resubscribes and receives after Redis restart" "true" "$(printf '%s' "$redis_existing_result" | jq -r '.recovered // false' 2>/dev/null || printf 'false')"
 sleep 5
 
 redis_result=$(docker exec -i supabase-centrifugo-outbox node --input-type=module - \

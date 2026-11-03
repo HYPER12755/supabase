@@ -1,6 +1,6 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`. Phase 5 is implemented and verified: namespace presence, opt-in join/leave, bounded history with recovery, authenticated presence/history, public-only anonymous subscribe, and proxy-authorized server/client broadcast; `test-centrifugo-features.sh` passes 41/41, including two-user/two-tenant isolation and error mapping. `COMPATIBILITY.md` records the supported, partial, and unsupported parity matrix, including the absence of WAL CDC, exact RLS row filtering, and server-side filter parity.
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (48/48 auth, 30/30 gateway). Kong is intentionally out of scope: Envoy is the only supported gateway for this beta, consistent with Supabase's move to Envoy. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`. Phase 5 is implemented and verified: namespace presence, opt-in join/leave, bounded history with recovery, authenticated presence/history, public-only anonymous subscribe, and proxy-authorized server/client broadcast; `test-centrifugo-features.sh` passes 41/41, including two-user/two-tenant isolation and error mapping. `COMPATIBILITY.md` records the supported, partial, and unsupported parity matrix, including the absence of WAL CDC, exact RLS row filtering, and server-side filter parity. Phase 6 is committed as `9f37c2fd`: scale/HA overlays, partitioned outbox consumers, load results, and the HAProxy session-drain fix pass 33/33 scale, 10/10 load, and 19/19 HA checks. Phase 7 is implemented: Vector routes Centrifugo/auth/outbox logs to `centrifugo.logs.prod`, auth exposes Prometheus metrics and audit fields, and [OPERATIONS.md](docker/volumes/centrifugo/OPERATIONS.md) documents alerts, dashboards, health checks, and failure procedures. Gateway checks pass 30/30, auth 48/48, auth unit 15/15, and Vector pipeline tests 4/4. The battle test on 2026-11-03 confirmed auth-outage socket continuity and single-worker outbox failover, found Envoy's ~15-second node-ejection window can return transient API 503s, and confirmed a Redis restart sends existing subscribers `unsubscribe` code 2500 so clients must resubscribe before delivery resumes. Post-battle suites still pass 30/30 gateway, 48/48 auth, 41/41 features, 11/11 outbox, and 33/33 scale.
 Last updated: 2026-11-03
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
@@ -64,7 +64,7 @@ Run Centrifugo as an additive, opt-in realtime backend alongside the untouched S
 | Postgres changes | Separate `centrifugo` schema, outbox table, trigger helpers, and an outbox consumer | Avoids WAL CDC complexity and keeps `_realtime` untouched |
 | Postgres change payload | Notification-only by default; full row payload only for explicitly reviewed tables | Prevents accidental cross-tenant row leakage under RLS |
 | Scale-out | Redis Cluster/Sentinel and multiple Centrifugo nodes; no sticky sessions | Standard Centrifugo scale model |
-| Gateway | Additive Envoy routes by default; mirror in Kong when the Kong override is active | Both supported self-hosted gateways must behave the same |
+| Gateway | Additive Envoy routes only | Envoy is the only supported gateway for this beta; Kong is out of scope |
 | Logging | Add a Vector route and a distinct Logflare source, e.g. `centrifugo.logs.prod` | Keeps Realtime log expectations unchanged |
 | HTTP API | Internal-only by default; if exposed, require the Centrifugo API key and explicit opt-in | Server-to-server API must not become a public surface |
 | Admin UI | Disabled by default; if enabled, internal-only | Avoid a new public admin surface |
@@ -107,7 +107,7 @@ Browser / mobile / server SDK
   | wss /realtime/v1/connection/websocket           (reserved alias)
   | http /centrifugo/v1/auth/token                  (token exchange)
   v
-Envoy api-gw :8000  (or Kong when the Kong override is active)
+Envoy api-gw :8000
   |-- /realtime/v1/websocket, /realtime/v1/api/* --> Supabase Realtime :4000   (unchanged)
   |-- /centrifugo/v1/* ---------------------------> Centrifugo :8000
   |-- /centrifugo/v1/auth/token ------------------> centrifugo-auth :8090
@@ -289,9 +289,12 @@ Rules:
 | `docker/docker-compose.yml` | Do not modify for Centrifugo. Preserve the existing JWKS setup edits. |
 | `docker/volumes/api/envoy/cds.yaml` | Add a Centrifugo cluster in a marked block |
 | `docker/volumes/api/envoy/lds.template.yaml` | Add Centrifugo routes in a marked block |
-| `docker/volumes/api/kong.yml` | Mirror the routes for the Kong override |
-| `docker/volumes/api/kong-entrypoint.sh` | Only if key translation or WebSocket handling needs a Centrifugo-specific branch |
+| `docker/volumes/api/kong.yml` | Out of scope; do not modify for Centrifugo |
+| `docker/volumes/api/kong-entrypoint.sh` | Out of scope; do not modify for Centrifugo |
 | `docker/volumes/logs/vector.yml` | Add a Centrifugo router, parser, and sink |
+| `docker/volumes/logs/centrifugo-tests.yml` | Vector unit tests for routing, filtering, parsing, and audit fields |
+| `docker/volumes/centrifugo/OPERATIONS.md` | Runbook, scrape config, alert rules, and dashboard queries |
+| `docker/tests/test-centrifugo-logs.sh` | Validate the Vector config and run Centrifugo pipeline tests |
 | `docker/tests/test-self-hosted.sh` | Do not change existing Realtime expectations; add Centrifugo coverage separately |
 | `docker/tests/test-auth-keys.sh` | Do not change existing Realtime expectations; add Centrifugo coverage separately |
 | `docker/tests/test-container-logs.sh` | Do not change existing Realtime expectations; add Centrifugo coverage separately |
@@ -317,7 +320,7 @@ Description: Prove the current stack is healthy and record the upstream boundary
 
 - [x] Perform a clean reset and rotate local secrets.
 - [x] Verify 11/11 containers healthy, DB login, Studio 200, JWKS, and the `hello` function.
-- [x] Map every Supabase Realtime touchpoint: compose, Envoy, Kong, Vector, DB init, tests, Studio, env scripts.
+- [x] Map every Supabase Realtime touchpoint: compose, Envoy, Vector, DB init, tests, Studio, env scripts. Kong is out of scope for this beta.
 - [x] Record the architecture decision: dual stack, opt-in overlay, no Phoenix adapter.
 - [x] Run `docker/tests/test-self-hosted.sh` after the clean reset and record the baseline. Result: 39/39.
 - [x] Run `docker/tests/test-auth-keys.sh` after the clean reset and record the baseline. Result: 56/56.
@@ -366,7 +369,7 @@ Description: Add Centrifugo as a standalone service with a pinned image, config,
   - [x] `restart: unless-stopped`.
   - [x] Depends only on what it truly needs; do not make it a dependency of upstream services.
 - [x] Verify the overlay works with Envoy.
-- [ ] Verify the overlay works with the Kong override. Deferred by user decision: this is a pre-existing Kong image permission issue, not caused by Centrifugo. `kong/kong:3.9.3` runs as UID 1001, while `/usr/local/kong` is root-owned, so the custom entrypoint cannot write its config or sockets. A temporary `user: "0:0"` override made the stack 12/12 healthy, but that fix was not applied. Kong is excluded from Phase 1 sign-off and tracked as a separate issue.
+- [x] Gateway support is Envoy-only; Kong verification is intentionally out of scope by user decision on 2026-11-03.
 - [x] Verify the base stack still starts with the overlay disabled and no Centrifugo env file.
 - [x] Verify `sh run.sh config add centrifugo` detects the overlay and `config remove` removes it.
 - [x] Document the enable/disable commands in the Centrifugo README.
@@ -377,22 +380,21 @@ Verification on 2026-10-31 and 2026-11-01:
 
 - `checkconfig --strict` and `checktoken` passed.
 - Envoy overlay: 12/12 containers healthy; internal health returned `{}`; no published port.
-- The earlier Kong 12/12 result was not reproducible. The final repeated run fails because the custom entrypoint cannot write `/usr/local/kong` as UID 1001.
-- Kong failure is independent of Centrifugo: the image runs as `kong` while `/usr/local/kong` is root-owned. With a temporary test-only `user: "0:0"` override, Kong startup returned 12/12 healthy and Centrifugo health stayed internal-only; this fix is not applied.
+- Kong was intentionally excluded; Envoy is the only supported gateway for this beta.
 - Overlay disabled with `.env.centrifugo` absent: base 11/11 containers healthy; no `supabase-centrifugo` container.
 - Internal `/api/publish` succeeded with `X-API-Key`; request without a key was rejected.
 - Allowed WebSocket origin returned 101; a disallowed origin returned 403.
 - Health and metrics returned 200; admin returned 404; config mount is read-only.
 - Host `/centrifugo/v1/health` still returns the gateway basic-auth 401, not Centrifugo.
 - Baseline suites re-ran after Phase 1: 39/39, 56/56, 13/13.
-- Phase 1 is signed off on Envoy only by user decision on 2026-11-01. The Kong override is excluded and tracked as a separate pre-existing issue.
+- Phase 1 is signed off on Envoy only. Kong is intentionally out of scope by user decision on 2026-11-03.
 - Final stack after review: Envoy restored, 12/12 containers healthy, no Kong container, `COMPOSE_FILE=docker-compose.yml:docker-compose.centrifugo.yml`.
 - Final Envoy/Centrifugo recheck: internal health `{}`, metrics non-empty, `X-API-Key` publish `{"result":{}}`, missing key `401`, host `/centrifugo/v1/health` `401`, no published port.
 - Re-verified on 2026-11-01: generator strength/mode-600/no-echo/overwrite-guard/force-backup/atomic cleanup; base disabled stack 11/11 with no Centrifugo env file; restored overlay 12/12; Phase 0 DB login, Studio 200, JWKS EC key, `hello` function, and four JWKS lines; baseline suites 39/39, 56/56, 13/13; `test-update.sh` 71/7.
 
 ### Phase 2 — Gateway Contract
 
-Description: Expose Centrifugo through Envoy and Kong without touching Supabase Realtime routes.
+Description: Expose Centrifugo through Envoy without touching Supabase Realtime routes.
 
 - [x] Add a `centrifugo` cluster to `docker/volumes/api/envoy/cds.yaml`:
   - [x] `STRICT_DNS` to `centrifugo:8000`.
@@ -409,13 +411,8 @@ Description: Expose Centrifugo through Envoy and Kong without touching Supabase 
 - [x] Ensure `/realtime/v1/api/tenants` and `/realtime/v1/api/openapi` remain blocked.
 - [x] Disable basic auth on the Centrifugo routes as appropriate; do not inherit Supabase gateway restrictions that break WebSocket upgrades.
 - [x] Configure CORS for the token endpoint.
-- [x] Mirror the routes in `docker/volumes/api/kong.yml`:
-  - [x] WebSocket service with `protocol: ws`.
-  - [x] Health service with `protocol: http`.
-  - [x] Auth token service with `protocol: http`.
-  - [x] API service with `protocol: http`, internal-only by default.
-  - [x] `/realtime/v1/connection/websocket` route ordered before the existing `/realtime/v1/` route.
-- [x] Verify WebSocket upgrade through Envoy and through Kong.
+- [x] Kong mirroring intentionally skipped; Envoy is the only supported gateway for this beta.
+- [x] Verify WebSocket upgrade through Envoy.
 - [x] Verify `/centrifugo/v1/websocket` and `/centrifugo/v1/connection/websocket` both reach Centrifugo.
 - [x] Verify `/realtime/v1/websocket` still reaches Supabase Realtime.
 - [x] Verify the HTTP API is not reachable without the Centrifugo API key.
@@ -433,13 +430,12 @@ Verification (2026-11-01):
   - `/realtime/v1/api/ping` stayed 200; `/api/tenants` and `/api/openapi` stayed 403;
   - API returned 401 without/with an invalid key and 200 with `X-API-Key`;
   - token CORS preflight returned 200; token endpoint returned 503 because `centrifugo-auth` is Phase 3.
-- Kong `kong.yml` loaded in a disposable root container on `supabase_default`; the same gateway test passed 22/22 against its proxy port. No root workaround was applied to the real Kong override, and its pre-existing permission blocker remains.
-- Kong CORS returns `*` for the token origin while Envoy echoes the request origin; the test accepts either. The Phase 3 auth service should enforce the final allowed-origin policy.
+- Kong was intentionally excluded from this verification; Envoy is the only supported gateway. The Phase 3 auth service enforces the final allowed-origin policy.
 - Disabled the Centrifugo overlay and restarted the base stack: 11/11 healthy. Envoy started with the Centrifugo clusters unresolved; the Centrifugo and reserved alias paths returned 503, and `/realtime/v1/api/ping` remained 200. Restored the overlay to 12/12 healthy.
 - Post-Phase 2 baselines: 39/39 self-hosted, 56/56 auth keys, 13/13 container logs.
 - Node 22.23.4 was installed locally at `/home/user/.local/node-v22.23.4` and used for the test run. Prettier 3.8.0 check passed for the changed YAML and README; `TODO.md` is outside the repo Prettier glob and its existing tables would be reformatted.
 
-Acceptance: The full path table in section 6.1 behaves as documented on Envoy; existing Realtime tests still pass. The Kong mirror is config-validated, but runtime acceptance of the real Kong override remains blocked by the pre-existing image permission issue.
+Acceptance: The full path table in section 6.1 behaves as documented on Envoy; existing Realtime tests still pass. Kong is out of scope for this beta.
 
 ### Phase 3 — Auth and Authorization
 
@@ -491,13 +487,13 @@ Verification (2026-11-01):
   - user connects; matching tenant and `user:<self>` subscribe; cross-tenant and other-user subscribe, malformed tenant ID, cross-tenant publish, oversized publish, and anonymous publish are denied with 403; authenticated `public` publish succeeds.
   - token IP and user rate limits return 429 after their configured windows; auth logs contain neither the session token nor the publishable key.
 - `docker/tests/test-centrifugo.sh`: 22/22 passed against Envoy after the CORS changes; token preflight is now 204, the origin is exact, and token without `apikey` is 401.
-- Kong: the disposable root container loaded `kong.yml` on `supabase_default`; the auth and gateway suites passed 39/39 and 22/22 against port 18000, including token CORS, rate limits, oversized publish rejection, and channel authorization. No root workaround was applied to the real Kong override.
+- Kong was intentionally excluded from this verification; Envoy is the only supported gateway.
 - The test scripts derive the gateway from `API_EXTERNAL_URL` or `SUPABASE_PUBLIC_URL`, the allowed CORS origin from `SITE_URL`, and the disallowed CORS origin from `SITE_URL` with a non-production host; they do not hardcode an environment URL. An explicit base URL argument still overrides the gateway.
 - Compose healthchecks contain no URL literal: the auth probe uses Node `http.get` host/port/path options and Centrifugo uses `nc -z` against its internal port.
-- CORS is handled by `centrifugo-auth`; the Envoy token route disables the virtual-host CORS filter, and the Kong `cors` plugin is removed. `service_role` and unknown roles are rejected before token signing. `SUPABASE_JWKS_URL` has no default and must be supplied explicitly; the unit suite covers the missing-value failure and JWKS cache refresh.
+- CORS is handled by `centrifugo-auth`; the Envoy token route disables the virtual-host CORS filter. `service_role` and unknown roles are rejected before token signing. `SUPABASE_JWKS_URL` has no default and must be supplied explicitly; the unit suite covers the missing-value failure and JWKS cache refresh.
 - Key rotation was verified live: a disposable Centrifugo v6.10.2 accepted a connection token signed with the previous HMAC secret while the current secret remained active, and `checkconfig` accepted the rotation environment. Current tokens use HS256 until Ed25519 is revisited.
 - The local `API_EXTERNAL_URL` already includes `/auth/v1`; the auth config no longer appends a second `/auth/v1`, and the compose issuer list was cleaned to `${API_EXTERNAL_URL} supabase`.
-- Final re-run after the last auth image rebuild (2026-11-01): unit 12/12; Envoy auth 39/39 and gateway 22/22; disposable Kong auth 39/39 and gateway 22/22; key rotation accepted the previous-secret token. Baselines: 39/39 self-hosted, 56/56 auth keys, 13/13 container logs. `test-update.sh` remains 71 passed, 7 pre-existing failures.
+- Final re-run after the last auth image rebuild (2026-11-01): unit 12/12; Envoy auth 39/39 and gateway 22/22; key rotation accepted the previous-secret token. Baselines: 39/39 self-hosted, 56/56 auth keys, 13/13 container logs. `test-update.sh` remains 71 passed, 7 pre-existing failures.
 - Node 22.23.4 (local install) and `supabase/centrifugo-auth:0.1.0` are recorded in `docker/versions.md`; the image runs as `node`, read-only, with no published port.
 
 Acceptance: Valid users and anonymous clients connect; invalid, expired, cross-tenant, and service-role attempts are rejected; no auth secrets appear in logs.
@@ -599,7 +595,7 @@ Description: Make Centrifugo horizontally scalable without changing the public c
 - [x] Configure Centrifugo engine/broker/presence manager for Redis.
 - [x] Pin the Redis image if bundled; prefer external Redis for production.
 - [x] Add Redis authentication and TLS options.
-- [x] Run at least two Centrifugo nodes behind Envoy/Kong.
+- [x] Run at least two Centrifugo nodes behind Envoy.
 - [x] Verify no sticky sessions are required.
 - [x] Verify WebSocket connections survive a node restart via reconnect.
 - [x] Verify history/recovery across nodes.
@@ -618,40 +614,45 @@ Description: Make Centrifugo horizontally scalable without changing the public c
 
 Acceptance: Losing one Centrifugo node does not lose data or permanently disconnect clients; load targets are documented and met.
 
-Status: local acceptance met on 2026-11-03 (31 scale checks, 10 load checks, 19 HA checks; gateway/auth/features/outbox suites also pass). The HA reference uses a master-only HAProxy that closes sessions to a demoted backend; a publish during the promotion window can still be lost and the HA test retries until delivery. External Redis HA failover remains an operational validation.
+Status: local acceptance met on 2026-11-03 (33 scale checks, 10 load checks, 19 HA checks; gateway/auth/features/outbox suites also pass). The HA reference uses a master-only HAProxy that closes sessions to a demoted backend; a publish during the promotion window can still be lost and the HA test retries until delivery. External Redis HA failover remains an operational validation.
 
 ### Phase 7 — Observability and Operations
 
 Description: Make the beta operable without reading source code.
 
-- [ ] Add Docker log routing:
-  - [ ] `supabase-centrifugo` -> `centrifugo` route.
-  - [ ] `supabase-centrifugo-auth` -> `centrifugo` route with a service field.
-  - [ ] Parse JSON or text as appropriate.
-  - [ ] Filter health-check noise.
-  - [ ] Sink to a distinct Logflare source (`centrifugo.logs.prod`).
-- [ ] Expose Prometheus metrics on an internal endpoint.
-- [ ] Add health checks for Centrifugo, auth, and outbox.
-- [ ] Add alerts/dashboards for:
-  - [ ] Connection count.
-  - [ ] Subscribe denials.
-  - [ ] Auth latency and errors.
-  - [ ] Token refresh failures.
-  - [ ] Outbox lag and dead letters.
-  - [ ] Redis errors.
-  - [ ] Node restarts.
-- [ ] Add an audit trail for authorization denials without logging tokens.
-- [ ] Add a runbook:
-  - [ ] WebSocket 401/403.
-  - [ ] Auth service down.
-  - [ ] Outbox lag.
-  - [ ] Redis down.
-  - [ ] Gateway route mismatch.
-  - [ ] Secret rotation.
-  - [ ] Rollback.
-- [ ] Add log tests to `docker/tests/test-centrifugo.sh`.
+- [x] Add Docker log routing:
+  - [x] `supabase-centrifugo` -> `centrifugo` route.
+  - [x] `supabase-centrifugo-auth` -> `centrifugo` route with a service field.
+  - [x] `supabase-centrifugo-outbox` and `supabase-centrifugo-outbox-2` -> `centrifugo` route.
+  - [x] Parse JSON or text as appropriate.
+  - [x] Filter health-check noise.
+  - [x] Sink to a distinct Logflare source (`centrifugo.logs.prod`).
+- [x] Expose Prometheus metrics on internal endpoints: Centrifugo native metrics, plus auth HTTP, token, authorization, rate-limit, and process metrics.
+- [x] Add health checks for Centrifugo, auth, and outbox.
+- [x] Add alerts/dashboards for:
+  - [x] Connection count.
+  - [x] Subscribe denials.
+  - [x] Auth latency and errors.
+  - [x] Token refresh failures.
+  - [x] Outbox lag and dead letters.
+  - [x] Redis errors.
+  - [x] Node restarts.
+- [x] Add an audit trail for authorization denials without logging tokens.
+- [x] Add a runbook:
+  - [x] WebSocket 401/403.
+  - [x] Auth service down.
+  - [x] Outbox lag.
+  - [x] Redis down.
+  - [x] Gateway route mismatch.
+  - [x] Secret rotation.
+  - [x] Rollback.
+- [x] Add log tests in `docker/tests/test-centrifugo-logs.sh` and metrics/audit checks to `docker/tests/test-centrifugo.sh` and `docker/tests/test-centrifugo-auth.sh`.
 
 Acceptance: An operator can diagnose the common failures from logs, metrics, and the runbook.
+
+Status: implemented on 2026-11-03. `test-centrifugo.sh` passes 30/30, `test-centrifugo-auth.sh` 48/48, auth unit tests 15/15, and `test-centrifugo-logs.sh` validates the Vector config plus 4/4 pipeline tests. Auth metrics cover HTTP requests and latency, token issuance/failures, authorization decisions and latency, rate limits, publish rejections, and process start time. Audit logs include action, reason, channel, and user without tokens. Vector routes Centrifugo, auth, outbox, and outbox-2 logs, filters `/health`, and sends to `centrifugo.logs.prod`. Live Logflare delivery requires the logs overlay; the pipeline is covered by Vector unit tests because the local analytics image is not part of the default stack.
+
+Battle test status: passed on 2026-11-03 against the scale-only stack. Auth stop kept existing WebSockets connected and receiving API publications while token issuance returned 503; auth restart restored token issuance without disconnecting them. Stopping node 2 left the surviving node and its subscribers healthy, but gateway API publishes returned intermittent 503s until Envoy ejected the failed endpoint after three 5-second health checks. Stopping outbox consumer 0 left consumer 1 to publish the pending row. Envoy restart dropped WebSockets with 1006 and new clients reconnected after health. Redis restart sent existing subscribers `unsubscribe` code 2500 (`insufficient state`); a client that resubscribed recovered and received later publications. New clients worked after Redis recovered. `test-centrifugo-scale.sh` now covers this path: it restarts Redis under an existing subscriber, asserts the `2500` unsubscribe, resubscribes, and verifies delivery. All post-battle suites passed.
 
 ### Phase 8 — Client SDKs and Migration
 
@@ -695,7 +696,6 @@ Description: Make the beta safe to merge and maintain.
 - [ ] Create `docker/tests/test-centrifugo.sh`:
   - [ ] Health endpoint.
   - [ ] WebSocket upgrade through Envoy.
-  - [ ] WebSocket upgrade through Kong.
   - [ ] Valid user token connects.
   - [ ] Anonymous publishable key connects.
   - [ ] Missing/invalid token is rejected.
@@ -890,7 +890,7 @@ sh tests/test-container-logs.sh
 | 2026-10-31 | Separate `centrifugo` schema and outbox; no `_realtime` changes | Locked |
 | 2026-10-31 | Notification-only Postgres change payload by default | Locked |
 | 2026-10-31 | Redis for scale-out, not in the default local stack | Locked |
-| 2026-10-31 | Additive Envoy/Kong routes and a distinct Vector/Logflare source | Locked |
+| 2026-10-31 | Additive Envoy/Kong routes and a distinct Vector/Logflare source | Superseded: Envoy only |
 | 2026-10-31 | Existing Studio Realtime Inspector stays on Supabase Realtime | Locked |
 | 2026-10-31 | Confirm official SDK vs thin Supabase-like adapter | Open |
 | 2026-10-31 | Confirm `centrifugo-auth` language and token signing | Resolved: Node.js 22.23.4 ESM, HMAC-SHA256 with previous-key rotation; Ed25519 deferred |
@@ -899,3 +899,4 @@ sh tests/test-container-logs.sh
 | 2026-11-01 | Phase 3 uses a local default-deny fallback until the Phase 4 `centrifugo.authorize` migration is applied | Locked |
 | 2026-11-01 | Rotate connection-token keys through Centrifugo previous-secret env vars; keep Ed25519 as a future option | Locked |
 | 2026-11-02 | Enable presence, opt-in join/leave, bounded history/recovery, and JSON-object publishes for all channel namespaces; keep proxy authorization authoritative | Locked |
+| 2026-11-03 | Gateway support is Envoy-only; skip Kong because Supabase is standardizing on Envoy | Locked |

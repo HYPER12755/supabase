@@ -2,13 +2,15 @@
 
 Centrifugo runs as an additive, opt-in realtime backend alongside Supabase Realtime.
 
-Phase 3 status: `centrifugo-auth` issues short-lived Centrifugo connection tokens, validates Supabase JWTs/JWKS, and runs subscribe/publish authorization through Centrifugo proxies. Kong mirrors the routes and passes the gateway suite in a disposable root container; the Kong override itself remains blocked by a pre-existing image permission issue.
+Phase 3 status: `centrifugo-auth` issues short-lived Centrifugo connection tokens, validates Supabase JWTs/JWKS, and runs subscribe/publish authorization through Centrifugo proxies. Envoy is the only supported gateway for this beta.
 
 Phase 4 status: `centrifugo-migrate` applies the idempotent Postgres schema, roles, outbox tables, and `centrifugo.authorize`; `centrifugo-outbox` publishes change events through the internal Centrifugo HTTP API. A reviewed table trigger emits notification-only events by default, and full-row payloads require an explicit allowlist entry.
 
 Phase 5 status: the `tenant`, `user`, and `public` namespaces enable presence, opt-in join/leave events, history, and forced recovery, with subscribe/publish still authorized through the proxies and database. Anonymous access is limited to `public` subscriptions; presence and history are available to authenticated subscribers. The compatibility matrix and beta limitations are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
-Phase 6 status: `docker-compose.centrifugo-scale.yml` adds a second Centrifugo node, a second outbox consumer, and a local Redis reference service. Both nodes use Redis for the engine, broker, and presence manager, and Envoy/Kong route to the shared `centrifugo` DNS alias without sticky sessions. The two outbox workers run partitioned mode and cover different channel partitions. Local load targets and sizing guidance are in [SCALING.md](SCALING.md); the local acceptance checks pass. An optional HA overlay adds a Redis replica, three Sentinels, and an HAProxy master-only endpoint; `tests/test-centrifugo-scale-ha.sh` exercises local promotion, client continuity, and recovery. The bundled Redis services are for local testing only; production should use external Redis with HA/failover, and external HA remains an operational validation.
+Phase 6 status: `docker-compose.centrifugo-scale.yml` adds a second Centrifugo node, a second outbox consumer, and a local Redis reference service. Both nodes use Redis for the engine, broker, and presence manager, and Envoy routes to the shared `centrifugo` DNS alias without sticky sessions. The two outbox workers run partitioned mode and cover different channel partitions. Local load targets and sizing guidance are in [SCALING.md](SCALING.md); the local acceptance checks pass. An optional HA overlay adds a Redis replica, three Sentinels, and an HAProxy master-only endpoint; `tests/test-centrifugo-scale-ha.sh` exercises local promotion, client continuity, and recovery. The bundled Redis services are for local testing only; production should use external Redis with HA/failover, and external HA remains an operational validation.
+
+Phase 7 status: Centrifugo, auth, and outbox logs route through Vector to the `centrifugo.logs.prod` source when the logs overlay is enabled. Centrifugo exposes its native Prometheus metrics, and `centrifugo-auth` exposes request, token, authorization, rate-limit, and process metrics. Authorization denials and rate limits include channel and user fields without tokens. Health checks remain internal. Alerts, dashboard queries, and failure procedures are in [OPERATIONS.md](OPERATIONS.md).
 
 ## Enable
 
@@ -51,15 +53,15 @@ sh tests/test-centrifugo-scale.sh
 
 The local topology is:
 
-- `supabase-centrifugo` and `supabase-centrifugo-2` are two Centrifugo nodes behind the `centrifugo` Compose network alias. Envoy and Kong resolve that alias, so no upstream configuration change or sticky session is required.
+- `supabase-centrifugo` and `supabase-centrifugo-2` are two Centrifugo nodes behind the `centrifugo` Compose network alias. Envoy resolves that alias, so no upstream configuration change or sticky session is required.
 - `supabase-centrifugo-redis` is a single-node Redis reference service with password authentication. It has no published port, no persistence, and no high-availability guarantees. It is not a production Redis deployment.
-- Both nodes share Redis for history and presence, so a client connected to one node can recover publications written through the other. A Centrifugo node restart does not lose Redis-backed history; a local Redis restart does.
+- Both nodes share Redis for history and presence, so a client connected to one node can recover publications written through the other. A Centrifugo node restart does not lose Redis-backed history; a local Redis restart does. A Redis restart also sends existing subscribers `unsubscribe` code `2500` (`insufficient state`), so clients must resubscribe and use history recovery where delivery matters.
 - `supabase-centrifugo-outbox` and `supabase-centrifugo-outbox-2` run as two partitioned consumers (`PARTITION_COUNT=2`, indexes 0 and 1). Each channel belongs to one partition, so rows are claimed once. Increase the partition count and worker count together for production throughput.
 - The Centrifugo auth service remains shared. Redis is internal to the Compose network and must never be exposed publicly.
 
 For production, use an external Redis deployment with authentication, TLS, persistence, and the deployment's failover policy. Set the engine, broker, and presence-manager addresses and credentials in `.env.centrifugo-scale`; use `rediss://` and the matching `*_REDIS_TLS_*` flags when TLS is required. Do not ship the bundled Redis service to production. See `.env.centrifugo-scale.example` for the full variable set.
 
-The scale test checks cross-node join, presence, publish, history/recovery, subscribe-proxy calls on both nodes, gateway distribution, partitioned outbox ownership without duplicate publication, node restart/reconnect, and Redis restart/reconnect.
+The scale test checks cross-node join, presence, publish, history/recovery, subscribe-proxy calls on both nodes, gateway distribution, partitioned outbox ownership without duplicate publication, node restart/reconnect, and Redis restart/reconnect. The test keeps an existing subscriber connected across a Redis restart, asserts the `2500` unsubscribe, resubscribes, and verifies delivery; see [OPERATIONS.md](OPERATIONS.md).
 
 ### Redis HA reference (optional)
 
@@ -90,9 +92,10 @@ sh tests/test-centrifugo-outbox.sh
 sh tests/test-centrifugo-scale.sh
 sh tests/test-centrifugo-load.sh
 sh tests/test-centrifugo-scale-ha.sh
+sh tests/test-centrifugo-logs.sh
 ```
 
-`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, `docker port supabase-centrifugo-outbox`, and `docker port supabase-centrifugo-redis-proxy` should print nothing. `test-centrifugo.sh` checks the gateway contract, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, and channel authorization through the live proxies. `test-centrifugo-features.sh` checks subscribe/unsubscribe, server and client broadcast, presence, join/leave, history/recovery, anonymous restrictions, private and tenant authorization, two-tenant isolation, and error mapping. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation. `test-centrifugo-scale.sh` requires the scale overlay and checks two-node routing, Redis-backed presence/history, gateway distribution, partitioned outbox ownership, and node/Redis restart recovery. `test-centrifugo-load.sh` runs the local reconnect, fan-out, channel, and outbox throughput smoke tests described in [SCALING.md](SCALING.md). `test-centrifugo-scale-ha.sh` requires the HA overlay and checks Sentinel promotion, master-only proxy routing, client continuity, publish/presence/history recovery, and restoration of the original master.
+`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, `docker port supabase-centrifugo-outbox`, and `docker port supabase-centrifugo-redis-proxy` should print nothing. `test-centrifugo.sh` checks the gateway contract and internal health/metrics endpoints, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, channel authorization through the live proxies, auth metrics, and audit fields. `test-centrifugo-features.sh` checks subscribe/unsubscribe, server and client broadcast, presence, join/leave, history/recovery, anonymous restrictions, private and tenant authorization, two-tenant isolation, and error mapping. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation. `test-centrifugo-scale.sh` requires the scale overlay and checks two-node routing, Redis-backed presence/history, gateway distribution, partitioned outbox ownership, and node/Redis restart recovery, including existing-subscriber resubscription after Redis restart. `test-centrifugo-load.sh` runs the local reconnect, fan-out, channel, and outbox throughput smoke tests described in [SCALING.md](SCALING.md). `test-centrifugo-scale-ha.sh` requires the HA overlay and checks Sentinel promotion, master-only proxy routing, client continuity, publish/presence/history recovery, and restoration of the original master. `test-centrifugo-logs.sh` validates the Vector configuration, routing, health filtering, JSON parsing, audit fields, and the Logflare source name.
 
 ## Endpoints
 
@@ -137,6 +140,8 @@ These paths are routed through the gateway:
 - The admin UI is disabled by default.
 - `CENTRIFUGO_AUTH_DATABASE_URL` and `CENTRIFUGO_OUTBOX_DATABASE_URL` use the least-privilege `centrifugo_auth` and `centrifugo_outbox` roles. The migration uses the deployment's `POSTGRES_PASSWORD` and `supabase_admin` to create those roles; the application containers never receive admin credentials.
 - The outbox worker has no published port. Its metrics and health endpoints are exposed only to the Compose network on port 9100.
+- `centrifugo-auth` exposes Prometheus text at `/metrics` on port 8090. The endpoint is internal and must not be routed publicly.
+- Centrifugo exposes native Prometheus metrics at `/metrics` on port 8000. The endpoint is internal and must not be routed publicly.
 
 ## Database schema and change plane
 

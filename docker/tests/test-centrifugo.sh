@@ -8,7 +8,7 @@
 #
 # Prerequisites:
 #   - Running self-hosted Supabase instance with the Centrifugo overlay
-#   - Envoy or Kong gateway active
+#   - Envoy gateway active
 #   - .env and .env.centrifugo in the project directory
 #   - curl
 #   - node >= 16 (for the Supabase Realtime WebSocket assertion)
@@ -286,6 +286,50 @@ cors_origin=$(curl -s -D - -o /dev/null --max-time 5 \
 check_cors_origin "token allow-origin" "$cors_origin"
 check "token without apikey -> 401" "401" \
     "$(http_status "$BASE_URL/centrifugo/v1/auth/token" -X POST)"
+
+echo ""
+echo "--- Observability ---"
+if command -v docker >/dev/null 2>&1 && docker inspect supabase-centrifugo >/dev/null 2>&1; then
+    centrifugo_health=$(docker exec supabase-centrifugo wget -qO- http://127.0.0.1:8000/health >/dev/null 2>&1 && echo ok || echo failed)
+    check "Centrifugo health endpoint" "ok" "$centrifugo_health"
+
+    centrifugo_metrics=$(docker exec supabase-centrifugo wget -qO- http://127.0.0.1:8000/metrics 2>/dev/null || true)
+    case "$centrifugo_metrics" in
+        *'centrifugo_node_num_clients'*) check "Centrifugo metrics expose connected clients" "present" "present" ;;
+        *) check "Centrifugo metrics expose connected clients" "present" "missing" ;;
+    esac
+    case "$centrifugo_metrics" in
+        *'centrifugo_broker_redis_pub_sub_errors'*) check "Centrifugo metrics expose Redis errors" "present" "present" ;;
+        *) check "Centrifugo metrics expose Redis errors" "present" "missing" ;;
+    esac
+    case "$centrifugo_metrics" in
+        *'centrifugo_proxy_errors'*) check "Centrifugo metrics expose proxy errors" "present" "present" ;;
+        *) check "Centrifugo metrics expose proxy errors" "present" "missing" ;;
+    esac
+    case "$centrifugo_metrics" in
+        *'process_start_time_seconds'*) check "Centrifugo metrics expose process start" "present" "present" ;;
+        *) check "Centrifugo metrics expose process start" "present" "missing" ;;
+    esac
+else
+    check "Centrifugo observability setup" "skipped" "skipped"
+fi
+
+if command -v docker >/dev/null 2>&1 && docker inspect supabase-centrifugo-outbox >/dev/null 2>&1; then
+    outbox_health=$(docker exec supabase-centrifugo-outbox wget -qO- http://127.0.0.1:9100/health >/dev/null 2>&1 && echo ok || echo failed)
+    check "outbox health endpoint" "ok" "$outbox_health"
+
+    outbox_metrics=$(docker exec supabase-centrifugo-outbox wget -qO- http://127.0.0.1:9100/metrics 2>/dev/null || true)
+    case "$outbox_metrics" in
+        *'centrifugo_outbox_worker_up'*) check "outbox metrics expose worker state" "present" "present" ;;
+        *) check "outbox metrics expose worker state" "present" "missing" ;;
+    esac
+    case "$outbox_metrics" in
+        *'centrifugo_outbox_dead_letter_total'*) check "outbox metrics expose dead letters" "present" "present" ;;
+        *) check "outbox metrics expose dead letters" "present" "missing" ;;
+    esac
+else
+    check "outbox observability setup" "skipped" "skipped"
+fi
 
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="

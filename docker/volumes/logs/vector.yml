@@ -37,6 +37,7 @@ transforms:
       storage: '.appname == "supabase-storage"'
       functions: '.appname == "supabase-edge-functions"'
       db: '.appname == "supabase-db"'
+      centrifugo: '.appname == "supabase-centrifugo" || .appname == "supabase-centrifugo-auth" || .appname == "supabase-centrifugo-outbox" || .appname == "supabase-centrifugo-outbox-2"'
   # Ignores non nginx errors since they are related with kong booting up
   kong_logs:
     type: remap
@@ -170,6 +171,39 @@ transforms:
           .metadata.parsed.error_severity = "log"
       }
       .metadata.parsed.error_severity = upcase!(.metadata.parsed.error_severity)
+  centrifugo_logs_filtered:
+    type: filter
+    inputs:
+      - router.centrifugo
+    condition: '!contains(string!(.event_message), "/health")'
+  centrifugo_logs:
+    type: remap
+    inputs:
+      - centrifugo_logs_filtered
+    source: |-
+      .metadata.instance = del(.appname)
+      if .metadata.instance == "supabase-centrifugo-auth" {
+          .metadata.service = "auth"
+      } else if .metadata.instance == "supabase-centrifugo-outbox" || .metadata.instance == "supabase-centrifugo-outbox-2" {
+          .metadata.service = "outbox"
+      } else {
+          .metadata.service = "centrifugo"
+      }
+      parsed, err = parse_json(.event_message)
+      if err == null && is_object(parsed) {
+          if exists(parsed.ts) { .timestamp = parsed.ts }
+          if exists(parsed.time) { .timestamp = parsed.time }
+          if exists(parsed.level) { .severity = parsed.level }
+          if exists(parsed.msg) { .event_message = parsed.msg }
+          if exists(parsed.message) { .event_message = parsed.message }
+          .metadata = merge!(.metadata, parsed)
+          del(.metadata.ts)
+          del(.metadata.time)
+          del(.metadata.level)
+          del(.metadata.msg)
+          del(.metadata.message)
+          if exists(.severity) { .metadata.level = .severity }
+      }
 
 sinks:
   logflare_auth:
@@ -266,3 +300,17 @@ sinks:
       headers:
         x-api-key: ${LOGFLARE_PUBLIC_ACCESS_TOKEN?LOGFLARE_PUBLIC_ACCESS_TOKEN is required}
     uri: 'http://analytics:4000/api/logs?source_name=cloudflare.logs.prod'
+
+  logflare_centrifugo:
+    type: 'http'
+    inputs:
+      - centrifugo_logs
+    encoding:
+      codec: 'json'
+    method: 'post'
+    request:
+      retry_max_duration_secs: 30
+      retry_initial_backoff_secs: 1
+      headers:
+        x-api-key: ${LOGFLARE_PUBLIC_ACCESS_TOKEN?LOGFLARE_PUBLIC_ACCESS_TOKEN is required}
+    uri: 'http://analytics:4000/api/logs?source_name=centrifugo.logs.prod'

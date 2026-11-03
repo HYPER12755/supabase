@@ -408,6 +408,53 @@ check "anonymous public subscribe allowed" "true" "$(printf '%s' "$anon_ws" | jq
 check "anonymous public publish denied" "true" "$(printf '%s' "$anon_ws" | jq -r '.publicPublishDenied // false' 2>/dev/null || echo false)"
 
 echo ""
+echo "--- Observability ---"
+auth_health=$(docker exec "$AUTH_CONTAINER" wget -qO- http://127.0.0.1:8090/health 2>/dev/null || true)
+case "$auth_health" in
+    *'"status":"ok"'*) check "auth health endpoint" "ok" "ok" ;;
+    *) check "auth health endpoint" "ok" "failed" ;;
+esac
+
+auth_metrics=$(docker exec "$AUTH_CONTAINER" wget -qO- http://127.0.0.1:8090/metrics 2>/dev/null || true)
+case "$auth_metrics" in
+    *'centrifugo_auth_process_start_time_seconds'*) check "auth metrics expose process start" "present" "present" ;;
+    *) check "auth metrics expose process start" "present" "missing" ;;
+esac
+case "$auth_metrics" in
+    *'centrifugo_auth_token_issued_total'*) check "auth metrics expose issued tokens" "present" "present" ;;
+    *) check "auth metrics expose issued tokens" "present" "missing" ;;
+esac
+case "$auth_metrics" in
+    *'centrifugo_auth_authorization_decisions_total'*) check "auth metrics expose authorization decisions" "present" "present" ;;
+    *) check "auth metrics expose authorization decisions" "present" "missing" ;;
+esac
+case "$auth_metrics" in
+    *'centrifugo_auth_http_requests_total'*) check "auth metrics expose HTTP requests" "present" "present" ;;
+    *) check "auth metrics expose HTTP requests" "present" "missing" ;;
+esac
+metrics_code=$(http_status "$BASE_URL/centrifugo/v1/metrics")
+case "$metrics_code" in
+    200) check "auth metrics are not public" "non-200" "200" ;;
+    *) check "auth metrics are not public" "$metrics_code" "$metrics_code" ;;
+esac
+
+echo ""
+echo "--- Audit trail ---"
+audit_log=$(docker logs "$AUTH_CONTAINER" 2>&1 | grep -F '"msg":"authz_denied"' | tail -n 1 || true)
+case "$audit_log" in
+    *'"channel":"'*) check "authorization denial includes channel" "present" "present" ;;
+    *) check "authorization denial includes channel" "present" "missing" ;;
+esac
+case "$audit_log" in
+    *'"user":"'*) check "authorization denial includes user" "present" "present" ;;
+    *) check "authorization denial includes user" "present" "missing" ;;
+esac
+case "$audit_log" in
+    *'"action":"'*) check "authorization denial includes action" "present" "present" ;;
+    *) check "authorization denial includes action" "present" "missing" ;;
+esac
+
+echo ""
 echo "--- Rate limits ---"
 if [ -n "$user_token" ] && [ -n "$ACCESS_TOKEN" ]; then
     ip_code=""

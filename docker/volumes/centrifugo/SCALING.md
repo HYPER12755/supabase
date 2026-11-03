@@ -6,9 +6,9 @@ This page records the local scale reference, the tested limits, and the producti
 
 | Environment | Centrifugo | Redis | Outbox | Gateway |
 | --- | --- | --- | --- | --- |
-| Local scale reference | Two nodes on the shared `centrifugo` network alias | Single bundled container, password auth, no persistence, no TLS | Two partitioned consumers | Envoy; Kong uses the same alias |
-| Local HA reference | Two nodes on the shared `centrifugo` network alias | Bundled master, replica, three Sentinels, and master-only HAProxy; no persistence or Sentinel auth | Two partitioned consumers | Envoy; Kong uses the same alias |
-| Production recommendation | Two or more nodes, no sticky sessions | External Redis with authentication, TLS, persistence, and HA/failover | One consumer per partition, partition count scaled with consumers | Envoy or Kong with health checks and DNS refresh |
+| Local scale reference | Two nodes on the shared `centrifugo` network alias | Single bundled container, password auth, no persistence, no TLS | Two partitioned consumers | Envoy |
+| Local HA reference | Two nodes on the shared `centrifugo` network alias | Bundled master, replica, three Sentinels, and master-only HAProxy; no persistence or Sentinel auth | Two partitioned consumers | Envoy |
+| Production recommendation | Two or more nodes, no sticky sessions | External Redis with authentication, TLS, persistence, and HA/failover | One consumer per partition, partition count scaled with consumers | Envoy with health checks and DNS refresh |
 
 All topologies keep Redis and the Centrifugo HTTP API internal. Clients use only the gateway WebSocket and token routes. The HA reference keeps Centrifugo on a stable proxy address; HAProxy health-checks Redis `ROLE` and only routes to the current master. Direct Sentinel tracking by Centrifugo's pub/sub connection did not recover reliably in the tested version, so the proxy is the supported local HA pattern. Production can use a managed Redis HA endpoint or an equivalent master-only proxy.
 
@@ -18,10 +18,10 @@ Run on 2026-11-03 with the local two-node Compose topology, two outbox consumers
 
 | Scenario | Configuration | Result |
 | --- | --- | --- |
-| Reconnect storm | 100 clients, 3 waves | 1,588 ms |
-| Fan-out | 100 subscribers, 10 publications | 151 ms for 1,000 deliveries |
+| Reconnect storm | 100 clients, 3 waves | 1,543 ms |
+| Fan-out | 100 subscribers, 10 publications | 150 ms for 1,000 deliveries |
 | Large channel set | 100 channels, one subscriber | 98 ms for 100 deliveries |
-| Outbox throughput | 200 rows, two partitions | 2,226 ms for 200 publications |
+| Outbox throughput | 200 rows, two partitions | 2,216 ms for 200 publications |
 
 The load test also verifies that every fan-out subscriber receives every publication, every channel receives its publication, all outbox rows drain, and both outbox consumers advance their partition counters.
 
@@ -32,6 +32,13 @@ The harness creates 10 temporary users and spreads clients across their tokens. 
 Run on 2026-11-03 against the two-node scale stack with one Redis master, one replica, three Sentinels, and HAProxy. `tests/test-centrifugo-scale-ha.sh` passed 19 checks: Sentinel initially followed the master, the proxy routed to the master, presence and history were ready, Sentinel promoted the replica, the proxy followed the promoted master, both clients stayed connected, publish/presence/history recovered, pre-failover history was retained, and the original master was restored. This validates the local failover path, not production Redis behavior or capacity.
 
 HAProxy closes sessions to a backend when it is marked down, preventing a subscription from staying attached to a demoted replica. The test retries a publish until a subscriber receives it because a publish sent immediately after promotion can race Centrifugo's pub/sub reconnect. Expect a small at-most-once window during failover; use history recovery for messages that must not be missed.
+
+## Failure behavior
+
+- Centrifugo node loss: clients on the failed node reconnect through Envoy. Envoy needs up to three 5-second health checks to eject the endpoint, so gateway API publishes can transiently return `503`; retry with application-level idempotency.
+- Redis restart: existing subscribers receive `unsubscribe` code `2500` (`insufficient state`). They must resubscribe and use history recovery where delivery matters. New clients connect normally after Redis recovers. The bundled Redis loses history and presence. `tests/test-centrifugo-scale.sh` restarts Redis under an existing subscriber, asserts the `2500` unsubscribe, resubscribes, and verifies delivery.
+- Envoy restart: active WebSockets close with `1006`; clients reconnect after the gateway is healthy.
+- Auth outage: existing WebSockets stay connected and continue receiving server API publications. Token issuance and new proxied subscribe/publish actions fail with `503` until auth recovers.
 
 ## Configured limits to plan around
 

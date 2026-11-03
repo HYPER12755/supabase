@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config.js'
 import { signConnectionToken } from '../src/connection-token.js'
 import { constantTimeEqual, matchesAny } from '../src/constant-time.js'
 import { JwksResolver } from '../src/jwks.js'
+import { Metrics } from '../src/metrics.js'
 import { RateLimiter } from '../src/rate-limit.js'
 import { verifySupabaseToken } from '../src/supabase-token.js'
 
@@ -314,4 +315,51 @@ test('constant-time key comparison accepts only exact keys', () => {
   assert.equal(constantTimeEqual('one', 'two'), false)
   assert.equal(matchesAny('key-b', ['key-a', 'key-b']), true)
   assert.equal(matchesAny('key-c', ['key-a', 'key-b']), false)
+})
+
+test('renders Prometheus counters, gauges, and histograms', () => {
+  const metrics = new Metrics({ startTimeSeconds: 1700000000 })
+  metrics.inc('centrifugo_auth_http_requests_total', {
+    method: 'POST',
+    path: '/auth/token',
+    status: '200',
+  })
+  metrics.observe('centrifugo_auth_http_request_duration_seconds', 0.02, {
+    method: 'POST',
+    path: '/auth/token',
+  })
+  metrics.inc('centrifugo_auth_authorization_decisions_total', {
+    action: 'subscribe',
+    decision: 'denied',
+  })
+
+  const output = metrics.render()
+
+  assert.match(
+    output,
+    /centrifugo_auth_http_requests_total\{method="POST",path="\/auth\/token",status="200"\} 1/
+  )
+  assert.match(
+    output,
+    /centrifugo_auth_http_request_duration_seconds_bucket\{method="POST",path="\/auth\/token",le="0.05"\} 1/
+  )
+  assert.match(
+    output,
+    /centrifugo_auth_http_request_duration_seconds_count\{method="POST",path="\/auth\/token"\} 1/
+  )
+  assert.match(
+    output,
+    /centrifugo_auth_authorization_decisions_total\{action="subscribe",decision="denied"\} 1/
+  )
+  assert.match(output, /centrifugo_auth_process_start_time_seconds 1700000000/)
+})
+
+test('escapes Prometheus label values', () => {
+  const metrics = new Metrics({ startTimeSeconds: 1 })
+  metrics.inc('centrifugo_auth_token_failures_total', { reason: 'a"b\\c' })
+
+  assert.match(
+    metrics.render(),
+    /centrifugo_auth_token_failures_total\{reason="a\\"b\\\\c"\} 1/
+  )
 })
