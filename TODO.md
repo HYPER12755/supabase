@@ -75,9 +75,7 @@ Run Centrifugo as an additive, opt-in realtime backend alongside the untouched S
 Resolve these before the phase that depends on them.
 
 1. SDK boundary (before Phase 8)
-   - Option A: official Centrifugo SDKs only, with a documented native API.
-   - Option B: official Centrifugo SDKs plus a thin Supabase-like adapter for `channel`, `broadcast`, `presence`, and `postgres_changes`.
-   - Recommendation: Option B if behavioral parity is required; do not build a Phoenix wire adapter.
+   - Resolved on 2026-11-03: Option A, official Centrifugo SDKs only with documented native APIs and copy-paste examples. No separate Supabase-like client SDK is published; no Phoenix wire adapter is built.
 2. `centrifugo-auth` and outbox language (before Phase 3)
    - Recommendation: Go for both services, with small static binaries and a shared internal module.
    - Alternative: TypeScript/Node if the team prefers one runtime.
@@ -658,36 +656,36 @@ Battle test status: passed on 2026-11-03 against the scale-only stack. Auth stop
 
 Description: Provide client support on every target platform without a Phoenix adapter.
 
-- [ ] Confirm the SDK boundary decision (Open Decision 1).
-- [ ] Write a shared contract:
-  - [ ] Connection states.
-  - [ ] Channel lifecycle.
-  - [ ] Broadcast, presence, and postgres-change event shapes.
-  - [ ] Error codes.
-  - [ ] Token refresh.
-  - [ ] Reconnect and recovery.
-- [ ] Build or adopt clients:
-  - [ ] JavaScript/TypeScript.
-  - [ ] Swift/iOS.
-  - [ ] Kotlin/Android.
-  - [ ] Flutter/Dart.
-  - [ ] Python/Go/other as required.
-- [ ] Use official Centrifugo SDKs as the transport.
-- [ ] If a Supabase-like API is required, keep the adapter thin and platform-local; do not emulate the Phoenix wire protocol.
-- [ ] Implement `getToken` against `/centrifugo/v1/auth/token`.
-- [ ] Implement channel authorization errors with actionable messages.
-- [ ] Implement reconnect, history recovery, and duplicate-event handling.
-- [ ] Add example apps for at least JS and one mobile platform.
-- [ ] Add cross-SDK conformance tests against the same server.
-- [ ] Write `CLIENT_MIGRATION.md`:
-  - [ ] Base URL changes.
-  - [ ] Auth changes.
-  - [ ] Event mapping.
-  - [ ] Unsupported behavior.
-  - [ ] Rollback to Supabase Realtime.
-- [ ] Verify `/realtime/v1/connection/websocket` and `/centrifugo/v1/connection/websocket` both work with the clients.
+- [x] Confirm the SDK boundary decision (Open Decision 1: official SDKs only, no separate client SDK).
+- [x] Write a shared contract:
+  - [x] Connection states.
+  - [x] Channel lifecycle.
+  - [x] Broadcast, presence, and postgres-change event shapes.
+  - [x] Error codes.
+  - [x] Token refresh.
+  - [x] Reconnect and recovery.
+- [x] Adopt official clients:
+  - [x] JavaScript/TypeScript with `centrifuge@5.8.0`.
+  - [x] Kotlin/Android with `io.github.centrifugal:centrifuge-java:0.8.0`.
+  - [x] Swift/iOS, Flutter/Dart, Python, and Go documented through their official SDKs; no custom client shipped.
+- [x] Use official Centrifugo SDKs as the transport.
+- [x] Do not build a Supabase-like SDK or emulate the Phoenix wire protocol; keep the JS and Kotlin integrations as examples.
+- [x] Implement `getToken` against `/centrifugo/v1/auth/token`.
+- [x] Map channel authorization and connection errors to actionable messages.
+- [x] Implement reconnect, history recovery, and duplicate-event handling.
+- [x] Add example apps for JS and one mobile platform.
+- [x] Add cross-SDK conformance tests against the same server.
+- [x] Write `CLIENT_MIGRATION.md`:
+  - [x] Base URL changes.
+  - [x] Auth changes.
+  - [x] Event mapping.
+  - [x] Unsupported behavior.
+  - [x] Rollback to Supabase Realtime.
+- [x] Verify `/realtime/v1/connection/websocket` and `/centrifugo/v1/connection/websocket` both work with the clients.
 
 Acceptance: At least JS/TS and one mobile client pass the shared conformance suite; migration and rollback are documented.
+
+Status: implemented on 2026-11-03. Official `centrifuge-js` 5.8.0 and `centrifuge-java` 0.8.0 pass `tests/test-centrifugo-clients.sh` against both client WebSocket routes: token exchange, subscribe, presence, history, reconnect, recovery, and duplicate suppression all pass. The examples are reference integrations, not a published SDK.
 
 ### Phase 9 — Test Suite and CI
 
@@ -810,7 +808,7 @@ Acceptance: The beta exit checklist is complete; promotion and rollback are both
 - [ ] Centrifugo starts only when the overlay is enabled.
 - [ ] Supabase Realtime is untouched and all upstream tests pass.
 - [ ] Auth, subscribe authorization, and outbox delivery work end to end.
-- [ ] JS/TS and one mobile client pass conformance.
+- [x] JS/TS and one mobile client pass conformance.
 - [ ] Logs, metrics, health checks, and a runbook exist.
 - [ ] Rollback to Supabase Realtime is documented and tested.
 - [ ] Known limitations are documented, especially WAL/RLS and filter parity.

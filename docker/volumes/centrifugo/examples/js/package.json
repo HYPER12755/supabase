@@ -1,0 +1,17 @@
+{
+  "name": "centrifugo-client-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test lib.test.mjs",
+    "example": "node basic.mjs",
+    "conformance": "node conformance.mjs"
+  },
+  "dependencies": {
+    "centrifuge": "5.8.0"
+  }
+}

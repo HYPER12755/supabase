@@ -58,3 +58,4 @@ This matrix describes what the Centrifugo beta exposes relative to Supabase Real
 | Token issuance, JWKS verification, CORS, proxy authorization, publishing limits, rate limits | `docker/tests/test-centrifugo-auth.sh` |
 | Outbox delivery, notification-only privacy, restart durability, dead letters, cross-tenant isolation | `docker/tests/test-centrifugo-outbox.sh` |
 | Gateway routes and Supabase Realtime regression | `docker/tests/test-centrifugo.sh` |
+| Official JS and Kotlin SDK token exchange, subscribe, presence, history, reconnect, recovery, duplicate suppression, and both client WebSocket routes | `docker/tests/test-centrifugo-clients.sh` |
