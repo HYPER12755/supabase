@@ -1,7 +1,7 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`.
-Last updated: 2026-11-02
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy; Kong is mirrored and config-validated in a disposable root container, but the actual Kong override remains blocked by a pre-existing image permission failure and is deferred. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (39/39 auth, 22/22 gateway); the Kong mirror passes the same 39/39 auth and 22/22 gateway suites in a disposable root container. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`. Phase 5 is implemented and verified: namespace presence, opt-in join/leave, bounded history with recovery, authenticated presence/history, public-only anonymous subscribe, and proxy-authorized server/client broadcast; `test-centrifugo-features.sh` passes 41/41, including two-user/two-tenant isolation and error mapping. `COMPATIBILITY.md` records the supported, partial, and unsupported parity matrix, including the absence of WAL CDC, exact RLS row filtering, and server-side filter parity.
+Last updated: 2026-11-03
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
 
@@ -276,7 +276,10 @@ Rules:
 | `docker/utils/generate-centrifugo-keys.sh` | Generate local Centrifugo secrets without printing them |
 | `docker/.env.centrifugo.example` | Placeholder environment file |
 | `docker/.env.centrifugo` | Local secrets, ignored by git |
-| `docker/tests/test-centrifugo.sh` | End-to-end beta tests |
+| `docker/tests/test-centrifugo.sh` | End-to-end gateway and Realtime regression tests |
+| `docker/tests/test-centrifugo-auth.sh` | Auth service and proxy integration tests |
+| `docker/tests/test-centrifugo-features.sh` | Channel behavior, presence, history, and isolation tests |
+| `docker/tests/test-centrifugo-outbox.sh` | Outbox and change-plane integration tests |
 
 ### 8.2 Existing Files
 
@@ -560,30 +563,30 @@ Acceptance: A reviewed table change reaches a subscribed client; no rows are los
 
 Description: Define and test the behavior our SDKs expose.
 
-- [ ] Configure namespaces:
-  - [ ] `tenant` for tenant-scoped table changes.
-  - [ ] `user` for private user channels.
-  - [ ] `public` for explicitly public broadcast channels.
-- [ ] Enable and test:
-  - [ ] Subscribe/unsubscribe.
-  - [ ] Broadcast from server and authorized client.
-  - [ ] Presence (`track`, `untrack`, `presence`).
-  - [ ] Join/leave events.
-  - [ ] History and recovery.
-  - [ ] Private channel authorization.
-  - [ ] Anonymous access only where explicitly allowed.
-  - [ ] Error mapping for denied subscription, invalid token, and rate limit.
-- [ ] Document mapping from Supabase Realtime concepts:
-  - [ ] `channel.subscribe()` -> Centrifugo subscription.
-  - [ ] `channel.send()` -> publish proxy or server API.
-  - [ ] `presence` -> Centrifugo presence.
-  - [ ] `postgres_changes` -> outbox change events.
-  - [ ] `private` -> subscribe proxy.
-  - [ ] `system` events -> connection/error events.
-  - [ ] `filters` -> client-side filtering in beta; no server-side filter parity.
-- [ ] Write `COMPATIBILITY.md` with supported, partial, and unsupported features.
-- [ ] Explicitly document the beta limitation: no WAL CDC and no exact Postgres RLS row filtering.
-- [ ] Test multi-tenant isolation with two users and two tenants.
+- [x] Configure namespaces:
+  - [x] `tenant` for tenant-scoped table changes.
+  - [x] `user` for private user channels.
+  - [x] `public` for explicitly public broadcast channels.
+- [x] Enable and test:
+  - [x] Subscribe/unsubscribe.
+  - [x] Broadcast from server and authorized client.
+  - [x] Presence (`presence`; automatic connection presence; `track`/`untrack` documented as partial).
+  - [x] Join/leave events.
+  - [x] History and recovery.
+  - [x] Private channel authorization.
+  - [x] Anonymous access only where explicitly allowed.
+  - [x] Error mapping for denied subscription, invalid token, and rate limit.
+- [x] Document mapping from Supabase Realtime concepts:
+  - [x] `channel.subscribe()` -> Centrifugo subscription.
+  - [x] `channel.send()` -> publish proxy or server API.
+  - [x] `presence` -> Centrifugo presence.
+  - [x] `postgres_changes` -> outbox change events.
+  - [x] `private` -> subscribe proxy.
+  - [x] `system` events -> connection/error events.
+  - [x] `filters` -> client-side filtering in beta; no server-side filter parity.
+- [x] Write `COMPATIBILITY.md` with supported, partial, and unsupported features.
+- [x] Explicitly document the beta limitation: no WAL CDC and no exact Postgres RLS row filtering.
+- [x] Test multi-tenant isolation with two users and two tenants.
 
 Acceptance: The compatibility matrix is accurate and covered by tests; no channel leaks data across tenants.
 
@@ -737,7 +740,8 @@ Description: Make enablement, migration, and rollback obvious.
   - [ ] Logs and metrics.
   - [ ] Troubleshooting.
   - [ ] Rollback.
-- [ ] Write `CLIENT_MIGRATION.md` and `COMPATIBILITY.md`.
+- [ ] Write `CLIENT_MIGRATION.md`.
+- [x] Write `COMPATIBILITY.md`.
 - [ ] Add the pinned versions to `docker/versions.md`.
 - [ ] Add a short pointer from `docker/CONFIG.md` or the main self-hosting docs, or keep all Centrifugo docs isolated and link from the README.
 - [ ] Add a promotion checklist:
@@ -859,6 +863,9 @@ sh run.sh start
 
 # Run the beta tests
 sh tests/test-centrifugo.sh
+sh tests/test-centrifugo-auth.sh
+sh tests/test-centrifugo-features.sh
+sh tests/test-centrifugo-outbox.sh
 
 # Run the baseline suites
 sh tests/test-self-hosted.sh
@@ -886,3 +893,4 @@ sh tests/test-container-logs.sh
 | 2026-11-01 | Enforce final CORS policy in `centrifugo-auth`; disable per-route Envoy CORS and remove Kong `cors` | Locked |
 | 2026-11-01 | Phase 3 uses a local default-deny fallback until the Phase 4 `centrifugo.authorize` migration is applied | Locked |
 | 2026-11-01 | Rotate connection-token keys through Centrifugo previous-secret env vars; keep Ed25519 as a future option | Locked |
+| 2026-11-02 | Enable presence, opt-in join/leave, bounded history/recovery, and JSON-object publishes for all channel namespaces; keep proxy authorization authoritative | Locked |

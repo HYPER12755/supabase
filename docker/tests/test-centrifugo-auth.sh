@@ -312,7 +312,7 @@ ws.addEventListener('open', async () => {
   result.publish = Boolean(publish.publish && !publish.error)
   const publishDenied = await send({ publish: { channel: `tenant:${process.env.OTHER_TENANT}:table:messages`, data: { ok: true } } })
   result.publishDenied = Boolean(publishDenied.error && publishDenied.error.code === 403)
-  const oversizedPublish = await send({ publish: { channel: 'public:phase3-publish', data: 'x'.repeat(17000) } })
+  const oversizedPublish = await send({ publish: { channel: 'public:phase3-publish', data: { value: 'x'.repeat(17000) } } })
   result.oversizedPublish = Boolean(oversizedPublish.error && oversizedPublish.error.code === 413)
   clearTimeout(timer)
   process.stdout.write(JSON.stringify(result))

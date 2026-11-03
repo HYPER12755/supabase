@@ -19,19 +19,65 @@
       {
         "name": "tenant",
         "subscribe_proxy_enabled": true,
-        "publish_proxy_enabled": true
+        "publish_proxy_enabled": true,
+        "presence": true,
+        "join_leave": true,
+        "force_push_join_leave": false,
+        "history_size": 100,
+        "history_ttl": "300s",
+        "history_meta_ttl": "1h",
+        "force_recovery": true,
+        "allow_subscribe_for_client": false,
+        "allow_subscribe_for_anonymous": false,
+        "allow_publish_for_client": false,
+        "allow_publish_for_anonymous": false,
+        "allow_history_for_client": false,
+        "allow_presence_for_client": false,
+        "allow_history_for_subscriber": true,
+        "allow_presence_for_subscriber": true
       },
       {
         "name": "user",
         "subscribe_proxy_enabled": true,
-        "publish_proxy_enabled": true
+        "publish_proxy_enabled": true,
+        "presence": true,
+        "join_leave": true,
+        "force_push_join_leave": false,
+        "history_size": 100,
+        "history_ttl": "300s",
+        "history_meta_ttl": "1h",
+        "force_recovery": true,
+        "allow_subscribe_for_client": false,
+        "allow_subscribe_for_anonymous": false,
+        "allow_publish_for_client": false,
+        "allow_publish_for_anonymous": false,
+        "allow_history_for_client": false,
+        "allow_presence_for_client": false,
+        "allow_history_for_subscriber": true,
+        "allow_presence_for_subscriber": true
       },
       {
         "name": "public",
         "subscribe_proxy_enabled": true,
-        "publish_proxy_enabled": true
+        "publish_proxy_enabled": true,
+        "presence": true,
+        "join_leave": true,
+        "force_push_join_leave": false,
+        "history_size": 100,
+        "history_ttl": "300s",
+        "history_meta_ttl": "1h",
+        "force_recovery": true,
+        "allow_subscribe_for_client": false,
+        "allow_subscribe_for_anonymous": false,
+        "allow_publish_for_client": false,
+        "allow_publish_for_anonymous": false,
+        "allow_history_for_client": false,
+        "allow_presence_for_client": false,
+        "allow_history_for_subscriber": true,
+        "allow_presence_for_subscriber": true
       }
-    ]
+    ],
+    "publication_data_format": "json_object"
   },
   "health": {
     "enabled": true

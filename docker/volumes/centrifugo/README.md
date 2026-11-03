@@ -6,6 +6,8 @@ Phase 3 status: `centrifugo-auth` issues short-lived Centrifugo connection token
 
 Phase 4 status: `centrifugo-migrate` applies the idempotent Postgres schema, roles, outbox tables, and `centrifugo.authorize`; `centrifugo-outbox` publishes change events through the internal Centrifugo HTTP API. A reviewed table trigger emits notification-only events by default, and full-row payloads require an explicit allowlist entry.
 
+Phase 5 status: the `tenant`, `user`, and `public` namespaces enable presence, opt-in join/leave events, history, and forced recovery, with subscribe/publish still authorized through the proxies and database. Anonymous access is limited to `public` subscriptions; presence and history are available to authenticated subscribers. The compatibility matrix and beta limitations are in [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## Enable
 
 From `docker/`:
@@ -41,10 +43,11 @@ docker exec supabase-auth wget -qO- http://centrifugo:8000/health
 docker exec supabase-centrifugo-outbox node -e "fetch('http://127.0.0.1:9100/health').then(r=>r.text()).then(console.log)"
 sh tests/test-centrifugo.sh
 sh tests/test-centrifugo-auth.sh
+sh tests/test-centrifugo-features.sh
 sh tests/test-centrifugo-outbox.sh
 ```
 
-`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, and `docker port supabase-centrifugo-outbox` should print nothing. `test-centrifugo.sh` checks the gateway contract, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, and channel authorization through the live proxies. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation.
+`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, and `docker port supabase-centrifugo-outbox` should print nothing. `test-centrifugo.sh` checks the gateway contract, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, and channel authorization through the live proxies. `test-centrifugo-features.sh` checks subscribe/unsubscribe, server and client broadcast, presence, join/leave, history/recovery, anonymous restrictions, private and tenant authorization, two-tenant isolation, and error mapping. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation.
 
 ## Endpoints
 
@@ -68,6 +71,15 @@ These paths are routed through the gateway:
 - Authorization decisions are cached for a few seconds keyed by action, user, channel, and `CENTRIFUGO_AUTHZ_CACHE_VERSION`. Bump the version or wait for the TTL after a role change.
 - Publish requests are size-limited and rate-limited. Prefer Centrifugo's internal HTTP API for trusted server-side broadcasts.
 - Logs contain request metadata and denial reasons only; tokens, API keys, and full claims are never logged.
+
+## Channel behavior
+
+- All three namespaces enable presence, opt-in join/leave events, history, and forced recovery. Clients request join/leave with the subscription `join_leave` option; it is not forced namespace-wide.
+- History keeps the latest 100 publications for 300 seconds. The memory engine loses history on restart, so clients must treat it as a bounded cache and reload authoritative state when recovery reports failure.
+- Authenticated subscribers may read presence and history. Anonymous clients may subscribe to `public:*` but cannot publish, read presence, or read history.
+- Client publishes go through the publish proxy and accept JSON objects only. Server-side broadcasts should use the internal HTTP API.
+- Namespaced private access uses `user:<uuid>`; tenant access uses `tenant:<uuid>:...`. Supabase's `private:` prefix is not translated automatically.
+- See [COMPATIBILITY.md](COMPATIBILITY.md) for the full supported/partial/unsupported matrix and error mapping.
 
 ## Configuration
 

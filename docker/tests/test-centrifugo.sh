@@ -263,7 +263,11 @@ api_result=$(curl -s -w '\n%{http_code}' --max-time 5 \
 api_code=$(printf '%s\n' "$api_result" | tail -n 1)
 api_body=$(printf '%s\n' "$api_result" | sed '$d')
 check "API with key -> 200" "200" "$api_code"
-check "API publish result" '{"result":{}}' "$api_body"
+case "$api_body" in
+    '{"result":'*) api_result_state=published ;;
+    *) api_result_state=invalid ;;
+esac
+check "API publish result" "published" "$api_result_state"
 
 echo ""
 echo "--- Auth token CORS ---"
