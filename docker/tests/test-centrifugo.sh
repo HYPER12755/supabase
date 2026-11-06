@@ -38,12 +38,17 @@ if [ ! -f .env.centrifugo ]; then
     exit 1
 fi
 
-for cmd in curl node; do
+for cmd in curl node docker; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: $cmd not found."
         exit 1
     fi
 done
+
+if ! docker inspect supabase-centrifugo >/dev/null 2>&1; then
+    echo "SKIP: supabase-centrifugo is not running."
+    exit 0
+fi
 
 BASE_URL="${1:-}"
 SITE_URL=$(unquote "$(read_env SITE_URL)")

@@ -14,6 +14,8 @@ Phase 7 status: Centrifugo, auth, and outbox logs route through Vector to the `c
 
 Phase 8 status: applications use the official Centrifugo SDKs directly; no separate client SDK is published. The shared client contract is in [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md), the Supabase-to-Centrifugo mapping and rollback steps are in [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md), and copy-paste JS and Kotlin integrations are in [examples/](examples/). `tests/test-centrifugo-clients.sh` runs the JS and Kotlin self-tests and SDK conformance checks against both `/realtime/v1/connection/websocket` and `/centrifugo/v1/connection/websocket`.
 
+Phase 9 status: `tests/test-centrifugo-security.sh`, `tests/test-centrifugo-sql.sh`, and `tests/test-centrifugo-secrets.sh` cover client-token rejection, outbox privileges, log secret scanning, SQL helper validation, and secret generation. `.github/workflows/centrifugo-tests.yml` runs the path-filtered suite and installs the pinned Kotlin toolchain for client conformance. When the logs overlay is enabled, `logs-source-init` provisions `centrifugo.logs.prod` before Vector starts, and `tests/test-centrifugo-logs.sh` verifies live delivery when the analytics and auth containers are running.
+
 ## Enable
 
 From `docker/`:
@@ -27,7 +29,9 @@ sh run.sh status
 
 The generated `docker/.env.centrifugo` contains the auth/outbox database passwords and URLs. It is ignored by git and must not be committed. `run.sh start` runs the Centrifugo migrations before bringing the stack up; use `sh run.sh migrate` to apply them explicitly.
 
-Do not rely on `docker compose up -d --wait` for a one-shot migration service: Compose treats a successfully exited container as a failed wait. The migration service is behind the `centrifugo-migrate` profile, and `run.sh` runs it before `up --wait`.
+To enable the log and metrics pipeline, also add the logs overlay before starting: `sh run.sh config add logs`. `run.sh start` then provisions the `centrifugo.logs.prod` Logflare source before Vector starts.
+
+Do not rely on `docker compose up -d --wait` for a one-shot service: Compose treats a successfully exited container as a failed wait. The `centrifugo-migrate` and `logs-source-init` services are behind profiles, and `run.sh` runs them before `up --wait`.
 
 ## Disable
 
@@ -89,16 +93,19 @@ docker exec supabase-auth wget -qO- http://centrifugo:8000/health
 docker exec supabase-centrifugo-outbox node -e "fetch('http://127.0.0.1:9100/health').then(r=>r.text()).then(console.log)"
 sh tests/test-centrifugo.sh
 sh tests/test-centrifugo-auth.sh
+sh tests/test-centrifugo-security.sh
+sh tests/test-centrifugo-sql.sh
 sh tests/test-centrifugo-features.sh
 sh tests/test-centrifugo-clients.sh
 sh tests/test-centrifugo-outbox.sh
 sh tests/test-centrifugo-scale.sh
 sh tests/test-centrifugo-load.sh
 sh tests/test-centrifugo-scale-ha.sh
+sh tests/test-centrifugo-secrets.sh
 sh tests/test-centrifugo-logs.sh
 ```
 
-`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, `docker port supabase-centrifugo-outbox`, and `docker port supabase-centrifugo-redis-proxy` should print nothing. `test-centrifugo.sh` checks the gateway contract and internal health/metrics endpoints, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, channel authorization through the live proxies, auth metrics, and audit fields. `test-centrifugo-features.sh` checks subscribe/unsubscribe, server and client broadcast, presence, join/leave, history/recovery, anonymous restrictions, private and tenant authorization, two-tenant isolation, and error mapping. `test-centrifugo-clients.sh` runs the JS and Kotlin helper self-tests and the official SDKs against both client WebSocket routes, checking token exchange, presence, history, reconnect, recovery, and duplicate suppression. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation. `test-centrifugo-scale.sh` requires the scale overlay and checks two-node routing, Redis-backed presence/history, gateway distribution, partitioned outbox ownership, and node/Redis restart recovery, including existing-subscriber resubscription after Redis restart. `test-centrifugo-load.sh` runs the local reconnect, fan-out, channel, and outbox throughput smoke tests described in [SCALING.md](SCALING.md). `test-centrifugo-scale-ha.sh` requires the HA overlay and checks Sentinel promotion, master-only proxy routing, client continuity, publish/presence/history recovery, and restoration of the original master. `test-centrifugo-logs.sh` validates the Vector configuration, routing, health filtering, JSON parsing, audit fields, and the Logflare source name.
+`docker port supabase-centrifugo`, `docker port supabase-centrifugo-auth`, `docker port supabase-centrifugo-outbox`, and `docker port supabase-centrifugo-redis-proxy` should print nothing. `test-centrifugo.sh` checks the gateway contract and internal health/metrics endpoints, including that `/realtime/v1/websocket` still reaches Supabase Realtime. `test-centrifugo-auth.sh` checks token issuance, CORS, user/anonymous access, service-role rejection, channel authorization through the live proxies, auth metrics, and audit fields. `test-centrifugo-security.sh` checks client-token rejection, outbox function/table privileges, and log secret scanning. `test-centrifugo-sql.sh` checks the SQL UUID, channel, authorization, send, and broadcast helpers. `test-centrifugo-features.sh` checks subscribe/unsubscribe, server and client broadcast, presence, join/leave, history/recovery, anonymous restrictions, private and tenant authorization, two-tenant isolation, and error mapping. `test-centrifugo-clients.sh` runs the JS and Kotlin helper self-tests and the official SDKs against both client WebSocket routes, checking token exchange, presence, history, reconnect, recovery, and duplicate suppression. `test-centrifugo-outbox.sh` checks trigger capture, delivery, restart durability, allowlisted full payloads, duplicate message ids, dead-letter handling, and cross-tenant isolation. `test-centrifugo-scale.sh` requires the scale overlay and checks two-node routing, Redis-backed presence/history, gateway distribution, partitioned outbox ownership, and node/Redis restart recovery, including existing-subscriber resubscription after Redis restart. `test-centrifugo-load.sh` runs the local reconnect, fan-out, channel, and outbox throughput smoke tests described in [SCALING.md](SCALING.md). `test-centrifugo-scale-ha.sh` requires the HA overlay and checks Sentinel promotion, master-only proxy routing, client continuity, publish/presence/history recovery, and restoration of the original master. `test-centrifugo-secrets.sh` checks secret file modes, lengths, rotation, backups, and that generation never prints secret values. `test-centrifugo-logs.sh` validates the Vector configuration, routing, health filtering, JSON parsing, audit fields, and the Logflare source name; when the analytics and auth containers are running it also verifies live delivery to `centrifugo.logs.prod` and health-log filtering.
 
 ## Endpoints
 

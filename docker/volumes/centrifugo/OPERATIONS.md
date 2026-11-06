@@ -228,7 +228,7 @@ These routes are active when `docker-compose.logs.yml` is enabled. Vector routes
 - `supabase-centrifugo-outbox`
 - `supabase-centrifugo-outbox-2`
 
-All events go to the `centrifugo.logs.prod` Logflare source. Events carry `metadata.service` (`centrifugo`, `auth`, or `outbox`) and `metadata.instance` (the Compose container name). JSON logs are parsed; outbox text logs stay as text. Request logs for `/health` are dropped.
+All events go to the `centrifugo.logs.prod` Logflare source. Logflare only seeds its built-in Supabase sources, so `run.sh start` runs the `logs-source-init` service before bringing up the stack; it creates `centrifugo.logs.prod` in `_analytics.sources` and confirms ingestion before Vector starts. If you use raw `docker compose up` instead, run `docker compose run --rm logs-source-init` first. If the source is missing, Vector receives `401 Unauthorized` and drops events. Events carry `metadata.service` (`centrifugo`, `auth`, or `outbox`) and `metadata.instance` (the Compose container name). JSON logs are parsed; outbox text logs stay as text. Request logs for `/health` are dropped.
 
 Authorization denials and rate limits include `action`, `reason`, `channel`, and `user` where available. Tokens, API keys, and full claims are never written to logs.
 
@@ -318,7 +318,10 @@ From `docker/`:
 ```bash
 sh tests/test-centrifugo.sh
 sh tests/test-centrifugo-auth.sh
+sh tests/test-centrifugo-security.sh
+sh tests/test-centrifugo-sql.sh
+sh tests/test-centrifugo-secrets.sh
 sh tests/test-centrifugo-logs.sh
 ```
 
-The log test validates the Vector config, runs Vector unit tests for routing, health filtering, JSON parsing, audit fields, and outbox text logs, and checks the Logflare source name. It does not require the analytics or Vector containers to be running.
+The log test validates the Vector config, runs Vector unit tests for routing, health filtering, JSON parsing, audit fields, and outbox text logs, and checks the Logflare source name. When the analytics and auth containers are running, it also generates an auth log and verifies live delivery to `centrifugo.logs.prod`; otherwise that portion is skipped. The security and SQL tests skip when the database or Centrifugo containers are not running. The secret-generation test does not require the stack.

@@ -648,7 +648,7 @@ Description: Make the beta operable without reading source code.
 
 Acceptance: An operator can diagnose the common failures from logs, metrics, and the runbook.
 
-Status: implemented on 2026-11-03. `test-centrifugo.sh` passes 30/30, `test-centrifugo-auth.sh` 48/48, auth unit tests 15/15, and `test-centrifugo-logs.sh` validates the Vector config plus 4/4 pipeline tests. Auth metrics cover HTTP requests and latency, token issuance/failures, authorization decisions and latency, rate limits, publish rejections, and process start time. Audit logs include action, reason, channel, and user without tokens. Vector routes Centrifugo, auth, outbox, and outbox-2 logs, filters `/health`, and sends to `centrifugo.logs.prod`. Live Logflare delivery requires the logs overlay; the pipeline is covered by Vector unit tests because the local analytics image is not part of the default stack.
+Status: implemented on 2026-11-03. `test-centrifugo.sh` passes 30/30, `test-centrifugo-auth.sh` 48/48, auth unit tests 15/15, and `test-centrifugo-logs.sh` validates the Vector config plus 4/4 pipeline tests. Auth metrics cover HTTP requests and latency, token issuance/failures, authorization decisions and latency, rate limits, publish rejections, and process start time. Audit logs include action, reason, channel, and user without tokens. Vector routes Centrifugo, auth, outbox, and outbox-2 logs, filters `/health`, and sends to `centrifugo.logs.prod`. The `logs-source-init` service provisions the source before Vector starts because Logflare only seeds built-in Supabase sources. Live delivery and health-log filtering are verified when the analytics and auth containers are running.
 
 Battle test status: passed on 2026-11-03 against the scale-only stack. Auth stop kept existing WebSockets connected and receiving API publications while token issuance returned 503; auth restart restored token issuance without disconnecting them. Stopping node 2 left the surviving node and its subscribers healthy, but gateway API publishes returned intermittent 503s until Envoy ejected the failed endpoint after three 5-second health checks. Stopping outbox consumer 0 left consumer 1 to publish the pending row. Envoy restart dropped WebSockets with 1006 and new clients reconnected after health. Redis restart sent existing subscribers `unsubscribe` code 2500 (`insufficient state`); a client that resubscribed recovered and received later publications. New clients worked after Redis recovered. `test-centrifugo-scale.sh` now covers this path: it restarts Redis under an existing subscriber, asserts the `2500` unsubscribe, resubscribes, and verifies delivery. All post-battle suites passed.
 
@@ -691,42 +691,42 @@ Status: implemented on 2026-11-03. Official `centrifuge-js` 5.8.0 and the Androi
 
 Description: Make the beta safe to merge and maintain.
 
-- [ ] Create `docker/tests/test-centrifugo.sh`:
-  - [ ] Health endpoint.
-  - [ ] WebSocket upgrade through Envoy.
-  - [ ] Valid user token connects.
-  - [ ] Anonymous publishable key connects.
-  - [ ] Missing/invalid token is rejected.
-  - [ ] Expired token is rejected.
-  - [ ] Cross-tenant subscribe is denied.
-  - [ ] Allowed subscribe succeeds.
-  - [ ] Broadcast publish succeeds.
-  - [ ] Unauthorized publish is denied.
-  - [ ] Outbox trigger -> consumer -> client delivery.
-  - [ ] Notification-only payload contains no row data.
-  - [ ] `/realtime/v1/websocket` still reaches Supabase Realtime.
-  - [ ] `/realtime/v1/connection/websocket` reaches Centrifugo.
-  - [ ] Centrifugo logs reach the expected source.
-- [ ] Add unit tests for:
-  - [ ] Secret generation (no secret output).
-  - [ ] Token claims and expiry.
-  - [ ] Subscribe channel parsing.
-  - [ ] SQL helper validation.
-  - [ ] Outbox retry/backoff.
-- [ ] Add integration tests for auth + Centrifugo + Postgres + outbox.
-- [ ] Add security tests:
-  - [ ] Service-role token cannot connect as a client.
-  - [ ] API key cannot be used as a client token.
-  - [ ] Cross-tenant channel access is denied.
-  - [ ] Outbox functions are not callable by `anon`/`authenticated`.
-  - [ ] Secrets are not present in logs.
-- [ ] Add load/soak tests or documented manual load-test procedures.
-- [ ] Add a path-filtered CI workflow for Centrifugo files.
-- [ ] Do not alter existing required CI checks.
-- [ ] Ensure tests skip cleanly when the overlay is disabled.
-- [ ] Ensure no test prints `.env` values.
+- [x] Create `docker/tests/test-centrifugo.sh`:
+  - [x] Health endpoint.
+  - [x] WebSocket upgrade through Envoy.
+  - [x] Valid user token connects.
+  - [x] Anonymous publishable key connects.
+  - [x] Missing/invalid token is rejected (also covered by `test-centrifugo-security.sh`).
+  - [x] Expired token is rejected (also covered by `test-centrifugo-security.sh`).
+  - [x] Cross-tenant subscribe is denied.
+  - [x] Allowed subscribe succeeds.
+  - [x] Broadcast publish succeeds.
+  - [x] Unauthorized publish is denied.
+  - [x] Outbox trigger -> consumer -> client delivery.
+  - [x] Notification-only payload contains no row data.
+  - [x] `/realtime/v1/websocket` still reaches Supabase Realtime.
+  - [x] `/realtime/v1/connection/websocket` reaches Centrifugo.
+  - [x] Centrifugo logs reach the expected source (`test-centrifugo-logs.sh`, including live delivery when analytics runs).
+- [x] Add unit tests for:
+  - [x] Secret generation (no secret output).
+  - [x] Token claims and expiry.
+  - [x] Subscribe channel parsing.
+  - [x] SQL helper validation.
+  - [x] Outbox retry/backoff.
+- [x] Add integration tests for auth + Centrifugo + Postgres + outbox.
+- [x] Add security tests:
+  - [x] Service-role token cannot connect as a client.
+  - [x] API key cannot be used as a client token.
+  - [x] Cross-tenant channel access is denied.
+  - [x] Outbox functions are not callable by `anon`/`authenticated`.
+  - [x] Secrets are not present in logs.
+- [x] Add load/soak tests or documented manual load-test procedures.
+- [x] Add a path-filtered CI workflow for Centrifugo files.
+- [x] Do not alter existing required CI checks.
+- [x] Ensure tests skip cleanly when the overlay is disabled.
+- [x] Ensure no test prints `.env` values.
 
-Acceptance: The new suite passes locally and in CI; existing upstream suites still pass.
+Status: implemented on 2026-11-06. The suite passes locally with the scale overlay and the logs overlay enabled, including live Logflare delivery and health-log filtering. `logs-source-init` provisions `centrifugo.logs.prod` before Vector starts because Logflare only seeds built-in Supabase sources. CI runs gateway, auth, security, SQL, features, outbox, client, secret, and log checks on Centrifugo path changes; scale, load, and HA suites remain manual. Existing required workflows are unchanged.
 
 ### Phase 10 — Documentation and Promotion
 
