@@ -36,8 +36,6 @@ unquote() {
 }
 
 BASE_URL="${1:-}"
-SITE_URL=$(unquote "$(read_env SITE_URL)")
-SITE_URL="${SITE_URL%/}"
 if [ -z "$BASE_URL" ]; then
     api_external_url=$(unquote "$(read_env API_EXTERNAL_URL)")
     api_external_url="${api_external_url%/}"
@@ -104,7 +102,7 @@ USER_RESPONSE=$(curl -s --max-time 10 \
     -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"centrifugo-clients-$RUN@example.com\",\"password\":\"$TEST_PASSWORD\",\"email_confirm\":true,\"app_metadata\":{\"tenant_id\":\"$TENANT_ID\"}}")
-USER_ID=$(printf '%s' "$USER_RESPONSE" | jq -r '.id // empty' 2>/dev/null)
+USER_ID=$(printf '%s' "$USER_RESPONSE" | jq -r '.id // empty' 2>/dev/null || true)
 if [ -z "$USER_ID" ]; then
     echo "Error: could not create test user."
     printf '%s\n' "$USER_RESPONSE"
@@ -116,7 +114,7 @@ SESSION=$(curl -s --max-time 10 \
     -H "apikey: $ANON_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"centrifugo-clients-$RUN@example.com\",\"password\":\"$TEST_PASSWORD\"}")
-ACCESS_TOKEN=$(printf '%s' "$SESSION" | jq -r '.access_token // empty' 2>/dev/null)
+ACCESS_TOKEN=$(printf '%s' "$SESSION" | jq -r '.access_token // empty' 2>/dev/null || true)
 if [ -z "$ACCESS_TOKEN" ]; then
     echo "Error: could not log in test user."
     printf '%s\n' "$SESSION"
@@ -168,6 +166,20 @@ build_kotlin() {
     fi
 }
 
+run_kotlin_self_test() {
+    if command -v java >/dev/null 2>&1; then
+        output=$(java -cp "$KOTLIN_JAR:$KOTLIN_DEPS/*" io.supabase.centrifugo.examples.SelfTestKt 2>&1) || true
+    else
+        output=$(nix shell nixpkgs#jdk21 -c env java -cp "$KOTLIN_JAR:$KOTLIN_DEPS/*" io.supabase.centrifugo.examples.SelfTestKt 2>&1) || true
+    fi
+    if printf '%s' "$output" | grep -q '^KOTLIN_CLIENT_SELF_TEST_OK$'; then
+        check "Kotlin client self-test" "ok" "ok"
+    else
+        check "Kotlin client self-test" "ok" "failed"
+        printf '%s\n' "$output"
+    fi
+}
+
 run_kotlin() {
     path="$1"
     channel="$CHANNEL_PREFIX-kotlin-$2"
@@ -211,6 +223,7 @@ run_js "/realtime/v1/connection/websocket" "realtime"
 run_js "/centrifugo/v1/connection/websocket" "centrifugo"
 
 if [ "$kotlin_built" -eq 1 ]; then
+    run_kotlin_self_test
     run_kotlin "/realtime/v1/connection/websocket" "realtime"
     run_kotlin "/centrifugo/v1/connection/websocket" "centrifugo"
 fi

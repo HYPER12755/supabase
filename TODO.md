@@ -667,13 +667,13 @@ Description: Provide client support on every target platform without a Phoenix a
 - [x] Adopt official clients:
   - [x] JavaScript/TypeScript with `centrifuge@5.8.0`.
   - [x] Kotlin/Android with `io.github.centrifugal:centrifuge-java:0.8.0`.
-  - [x] Swift/iOS, Flutter/Dart, Python, and Go documented through their official SDKs; no custom client shipped.
+  - [x] Swift/iOS, Flutter/Dart, Python, and Go use their official SDKs; install commands are documented, with JS and Kotlin as the tested integrations.
 - [x] Use official Centrifugo SDKs as the transport.
 - [x] Do not build a Supabase-like SDK or emulate the Phoenix wire protocol; keep the JS and Kotlin integrations as examples.
 - [x] Implement `getToken` against `/centrifugo/v1/auth/token`.
 - [x] Map channel authorization and connection errors to actionable messages.
 - [x] Implement reconnect, history recovery, and duplicate-event handling.
-- [x] Add example apps for JS and one mobile platform.
+- [x] Add reference integrations for JS and Kotlin/Android.
 - [x] Add cross-SDK conformance tests against the same server.
 - [x] Write `CLIENT_MIGRATION.md`:
   - [x] Base URL changes.
@@ -685,7 +685,7 @@ Description: Provide client support on every target platform without a Phoenix a
 
 Acceptance: At least JS/TS and one mobile client pass the shared conformance suite; migration and rollback are documented.
 
-Status: implemented on 2026-11-03. Official `centrifuge-js` 5.8.0 and `centrifuge-java` 0.8.0 pass `tests/test-centrifugo-clients.sh` against both client WebSocket routes: token exchange, subscribe, presence, history, reconnect, recovery, and duplicate suppression all pass. The examples are reference integrations, not a published SDK.
+Status: implemented on 2026-11-03. Official `centrifuge-js` 5.8.0 and the Android-compatible `centrifuge-java` 0.8.0 client pass `tests/test-centrifugo-clients.sh` against both client WebSocket routes: token exchange, subscribe, presence, history, reconnect, recovery, and duplicate suppression all pass. The examples are reference integrations, not a published SDK.
 
 ### Phase 9 — Test Suite and CI
 

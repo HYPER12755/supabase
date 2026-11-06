@@ -1,8 +1,9 @@
 import { Centrifuge, UnauthorizedError } from 'centrifuge'
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const SEGMENT_RE = /^[A-Za-z0-9_-]{1,64}$/
-const PUBLIC_NAME_RE = /^[A-Za-z0-9._~-]{1,128}$/
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+const PUBLIC_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 
 export class TokenError extends Error {
   constructor(message, { status = 0, code = 'token_error', retryable = false } = {}) {
@@ -115,8 +116,8 @@ function requireUuid(value, label) {
 }
 
 function validateChannel(channel) {
-  if (channel.length === 0 || channel.length > 255) {
-    throw new ChannelNameError('channel must be between 1 and 255 characters')
+  if (channel.length < 3 || channel.length > 255) {
+    throw new ChannelNameError('channel must be between 3 and 255 characters')
   }
   if (/\s/.test(channel)) throw new ChannelNameError('channel cannot contain whitespace')
   return channel
@@ -129,7 +130,9 @@ export function tenantChannel(tenantId, ...segments) {
   }
   const validated = segments.map((segment) => {
     if (!SEGMENT_RE.test(segment)) {
-      throw new ChannelNameError('tenant segments must be 1-64 URL-safe characters')
+      throw new ChannelNameError(
+        'tenant segments must start with a letter or digit and use at most 64 letters, digits, dots, hyphens, or underscores'
+      )
     }
     return segment
   })
@@ -148,7 +151,9 @@ export function channelTenant(channel) {
 
 export function publicChannel(name) {
   if (!PUBLIC_NAME_RE.test(name)) {
-    throw new ChannelNameError('public channel names must be 1-128 URL-safe characters')
+    throw new ChannelNameError(
+      'public channel names must start with a letter or digit and use at most 128 letters, digits, dots, hyphens, or underscores'
+    )
   }
   return `public:${name}`
 }
@@ -205,14 +210,18 @@ export function waitForEvent(emitter, event, predicate = () => true, timeout = 1
 }
 
 const ERROR_ACTIONS = new Map([
-  [403, 'authorization'],
-  [429, 'rate_limit'],
+  [103, 'authorization'],
+  [108, 'unavailable'],
   [109, 'token_expired'],
+  [110, 'reconnect'],
+  [111, 'rate_limit'],
+  [403, 'authorization'],
+  [413, 'payload_too_large'],
+  [429, 'rate_limit'],
   [3500, 'invalid_token'],
   [2500, 'resubscribe'],
   [3014, 'reconnect'],
   [112, 'reload'],
-  [103, 'authorization'],
 ])
 
 export function normalizeError(error) {

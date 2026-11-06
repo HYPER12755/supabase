@@ -21,12 +21,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONObject
 
 private val UUID_PATTERN =
-  Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-private val SEGMENT_PATTERN = Regex("^[A-Za-z0-9_-]{1,64}$")
-private val PUBLIC_NAME_PATTERN = Regex("^[A-Za-z0-9._~-]{1,128}$")
-private val MESSAGE_ID_PATTERN = Regex("\"message_id\"\\s*:\\s*\"([^\"]+)\"")
+  Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
+private val SEGMENT_PATTERN = Regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+private val PUBLIC_NAME_PATTERN = Regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 private val TOKEN_PATTERN = Regex("\"token\"\\s*:\\s*\"([^\"]+)\"")
 private val ERROR_PATTERN = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"")
 private val MESSAGE_PATTERN = Regex("\"message\"\\s*:\\s*\"([^\"]*)\"")
@@ -39,7 +39,9 @@ object Channels {
     if (segments.size > 4) throw ChannelNameException("tenant channels support at most four segments")
     val validated = segments.map {
       if (!SEGMENT_PATTERN.matches(it)) {
-        throw ChannelNameException("tenant segments must be 1-64 URL-safe characters")
+        throw ChannelNameException(
+          "tenant segments must start with a letter or digit and use at most 64 letters, digits, dots, hyphens, or underscores"
+        )
       }
       it
     }
@@ -50,7 +52,9 @@ object Channels {
 
   fun publicChannel(name: String): String {
     if (!PUBLIC_NAME_PATTERN.matches(name)) {
-      throw ChannelNameException("public channel names must be 1-128 URL-safe characters")
+      throw ChannelNameException(
+        "public channel names must start with a letter or digit and use at most 128 letters, digits, dots, hyphens, or underscores"
+      )
     }
     return "public:$name"
   }
@@ -67,8 +71,8 @@ object Channels {
   }
 
   private fun validate(channel: String): String {
-    if (channel.isEmpty() || channel.length > 255) {
-      throw ChannelNameException("channel must be between 1 and 255 characters")
+    if (channel.length < 3 || channel.length > 255) {
+      throw ChannelNameException("channel must be between 3 and 255 characters")
     }
     if (channel.any(Char::isWhitespace)) throw ChannelNameException("channel cannot contain whitespace")
     return channel
@@ -77,8 +81,12 @@ object Channels {
 
 fun publicationKey(data: ByteArray?, offset: Long): String? {
   if (data != null) {
-    val messageId = MESSAGE_ID_PATTERN.find(String(data, StandardCharsets.UTF_8))?.groupValues?.get(1)
-    if (!messageId.isNullOrEmpty()) return messageId
+    val messageId = try {
+      JSONObject(String(data, StandardCharsets.UTF_8)).optString("message_id", "")
+    } catch (_: Exception) {
+      ""
+    }
+    if (messageId.isNotEmpty()) return messageId
   }
   return if (offset > 0) offset.toString() else null
 }
@@ -204,12 +212,16 @@ fun errorCode(error: Throwable?): Int = when (error) {
 }
 
 fun actionableError(code: Int, message: String): String = when (code) {
-  403 -> "Not authorized for this channel: $message"
-  429 -> "Rate limited; retry after the server delay: $message"
+  103, 403 -> "Not authorized for this channel: $message"
+  413 -> "Payload too large; reduce it or publish through the server API: $message"
+  108 -> "This channel does not expose that feature: $message"
   109 -> "Connection token expired; refresh the token: $message"
-  3500 -> "Invalid connection token; request a new token: $message"
-  2500 -> "Subscription state was reset; resubscribe and recover: $message"
+  110 -> "Connection expired; reconnect and refresh the token if requested: $message"
+  111, 429 -> "Rate limited; retry after the server delay: $message"
   112 -> "History position is unrecoverable; reload state: $message"
+  2500 -> "Subscription state was reset; the SDK resubscribes, and history recovery may be unavailable: $message"
+  3014 -> "Connection state was invalidated; refresh the token and reconnect: $message"
+  3500 -> "Invalid connection token; request a new token: $message"
   else -> "Realtime error $code: $message"
 }
 

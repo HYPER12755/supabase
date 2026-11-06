@@ -29,9 +29,13 @@ test('rejects invalid channels', () => {
   assert.throws(() => tenantChannel('not-a-uuid'), ChannelNameError)
   assert.throws(() => tenantChannel(tenant, 'a', 'b', 'c', 'd', 'e'), ChannelNameError)
   assert.throws(() => tenantChannel(tenant, 'bad segment'), ChannelNameError)
+  assert.throws(() => tenantChannel(tenant, '-bad'), ChannelNameError)
+  assert.throws(() => userChannel('00000000-0000-0000-0000-000000000000'), ChannelNameError)
   assert.throws(() => userChannel('not-a-user'), ChannelNameError)
   assert.throws(() => publicChannel('bad:name'), ChannelNameError)
   assert.throws(() => publicChannel('bad name'), ChannelNameError)
+  assert.throws(() => publicChannel('~bad'), ChannelNameError)
+  assert.throws(() => publicChannel('-bad'), ChannelNameError)
 })
 
 test('deduplicates message ids and offsets with ttl and limit', () => {
@@ -65,6 +69,24 @@ test('normalizes SDK and subscription errors', () => {
     message: 'slow down',
     action: 'rate_limit',
     retryable: true,
+  })
+  assert.deepEqual(normalizeError({ code: 111, message: 'slow down' }), {
+    code: 111,
+    message: 'slow down',
+    action: 'rate_limit',
+    retryable: true,
+  })
+  assert.deepEqual(normalizeError({ error: { code: 108, message: 'no presence' } }), {
+    code: 108,
+    message: 'no presence',
+    action: 'unavailable',
+    retryable: false,
+  })
+  assert.deepEqual(normalizeError({ code: 413, message: 'too large' }), {
+    code: 413,
+    message: 'too large',
+    action: 'payload_too_large',
+    retryable: false,
   })
 })
 

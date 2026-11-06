@@ -39,7 +39,7 @@ Rules:
 - Send the anon or publishable key, never the service-role key.
 - Send the current Supabase access token when the user is signed in.
 - Treat `401`, `403`, and `service_key_not_allowed` as terminal for the current credentials. Do not retry with the same key.
-- Treat `429` as retryable after `Retry-After`.
+- Treat `429` as retryable; honor `Retry-After` if you implement your own retry loop.
 - Never log the access token, connection token, API key, or full token response.
 - On `109` (token expired), let the SDK call the token callback and reconnect. Do not open a parallel connection.
 
@@ -71,11 +71,11 @@ Channel names are constructed by the application; the server validates them.
 
 | Namespace | Format | Access |
 | --- | --- | --- |
-| `public` | `public:<name>` | Authenticated or anonymous subscribe. Publishing requires an authenticated user. |
+| `public` | `public:<name>` | Authenticated or anonymous subscribe. Client publishing, when enabled, requires an authenticated user. The name starts with a letter or digit and uses at most 128 letters, digits, dots, hyphens, or underscores. |
 | `user` | `user:<user_uuid>` | Only that user. |
-| `tenant` | `tenant:<tenant_uuid>[:<segment>...]` | A user whose server-controlled tenant claim matches. At most four segments, each 1-64 characters. |
+| `tenant` | `tenant:<tenant_uuid>[:<segment>...]` | A user whose server-controlled tenant claim matches. At most four segments; each starts with a letter or digit and uses at most 64 letters, digits, dots, hyphens, or underscores. |
 
-`public` names cannot contain `:`. `private:` and Supabase Realtime topic names are not translated automatically. Build an explicit mapping in the migration.
+`public` names cannot contain `:`. UUIDs use the server's RFC 4122 form with version 1-5 and variant 8, 9, a, or b. `private:` and Supabase Realtime topic names are not translated automatically. Build an explicit mapping in the migration.
 
 ## Event Shapes
 
@@ -91,7 +91,7 @@ Channel names are constructed by the application; the server validates them.
 }
 ```
 
-`data` is application data. Client publishes must be JSON objects and are limited to 16 KiB. `offset`, `tags`, and `info` are present only when the server sends them.
+`data` is application data. When client publishing is enabled, publishes must be JSON objects and are limited to 16 KiB. `offset`, `tags`, and `info` are present only when the server sends them.
 
 ### Postgres Change Event
 
@@ -119,20 +119,26 @@ Join and leave pushes carry `channel` and `info` with `client`, `user`, `connInf
 - Presence returns a map of client IDs to client info.
 - History returns ordered publications plus `offset` and `epoch`.
 - Anonymous clients cannot read presence or history.
-- History is a bounded cache: 100 publications for 300 seconds by default. On Redis restart, subscriptions receive `unsubscribe` code `2500`; resubscribe and recover, or reload state if recovery is unavailable.
+- History is a bounded cache: 100 publications for 300 seconds by default. On Redis restart, subscriptions receive `unsubscribe` code `2500`; the SDK resubscribes and recovers, or the application reloads state if recovery is unavailable.
 
 ## Error Mapping
 
 | Code | Meaning | Action |
 | --- | --- | --- |
-| `403` | Subscribe or publish denied. | Do not retry without a credentials or channel change. Show an authorization error. |
-| `429` | Publish or token endpoint rate limit. | Retry after `Retry-After`; add jitter. |
+| `103` | Permission denied. | Treat like `403`; do not retry without a credentials or channel change. |
+| `108` | Channel feature not available, such as history or presence. | Do not retry; check the namespace configuration. |
 | `109` | Connection token expired. | Refresh through the token callback. |
-| `3500` | Invalid connection token. | Fetch a new token; if it fails, sign the user out or use an anonymous token. |
-| `2500` | Server invalidated subscription state, including Redis restart. | Resubscribe; if recovery is unavailable, reload state. |
-| `3014` | Server invalidated connection state. | Refresh the token and reconnect. |
+| `110` | Connection expired. | Reconnect; refresh the token if the SDK requests it. |
+| `111` | SDK command rate limit. | Retry with backoff. |
 | `112` | Unrecoverable history position. | Reload state and subscribe from the new position. |
-| `103` | Permission or availability error from the SDK. | Treat like `403` for authorization; check the message. |
+| `403` | Subscribe or publish denied. | Do not retry without a credentials or channel change. Show an authorization error. |
+| `413` | Client publish payload exceeds 16 KiB. | Do not retry; reduce the payload or use the server API. |
+| `429` | HTTP token or publish endpoint rate limit. | Let the SDK retry with backoff; honor `Retry-After` if you implement your own retry. |
+| `2500` | Server invalidated subscription state, including Redis restart. | The SDK resubscribes automatically; reload state if recovery is unavailable. |
+| `3014` | Server invalidated connection state. | Refresh the token and reconnect. |
+| `3500` | Invalid connection token. | Fetch a new token; if it fails, sign the user out or use an anonymous token. |
+
+`413` and `429` are HTTP status codes; the other codes are Centrifugo protocol errors.
 
 ## Reconnect and Recovery
 

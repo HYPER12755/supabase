@@ -44,6 +44,7 @@ const client = createClient({
 })
 
 const dedupe = new Deduplicator()
+const delivered = new Map()
 const received = new Map()
 const subscription = client.newSubscription(env.CENTRIFUGO_TEST_CHANNEL, {
   joinLeave: true,
@@ -51,8 +52,10 @@ const subscription = client.newSubscription(env.CENTRIFUGO_TEST_CHANNEL, {
   positioned: true,
 })
 subscription.on('publication', (publication) => {
-  if (!dedupe.accept(publicationKey(publication))) return
+  const key = publicationKey(publication)
   const messageId = publication.data?.message_id
+  if (messageId) delivered.set(messageId, (delivered.get(messageId) ?? 0) + 1)
+  if (!dedupe.accept(key)) return
   if (messageId) received.set(messageId, (received.get(messageId) ?? 0) + 1)
 })
 
@@ -82,15 +85,27 @@ try {
   )
   await apiPublish(env.CENTRIFUGO_TEST_CHANNEL, { message_id: duplicateId, source: 'js' })
   await duplicatePublication
+  const duplicateReplay = waitForEvent(
+    subscription,
+    'publication',
+    (publication) => publication.data?.message_id === duplicateId
+  )
   await apiPublish(env.CENTRIFUGO_TEST_CHANNEL, { message_id: duplicateId, source: 'js' })
-  await new Promise((resolve) => setTimeout(resolve, 500))
+  await duplicateReplay
+  if ((delivered.get(duplicateId) ?? 0) < 2) throw new Error('duplicate was not delivered')
   if ((received.get(duplicateId) ?? 0) !== 1) throw new Error('duplicate was not suppressed')
 
   const presence = await subscription.presence()
+  const presenceClients = Object.keys(presence.clients ?? {}).length
+  if (presenceClients < 1) throw new Error('presence did not include the client')
+
   const history = await subscription.history({ limit: 10 })
-  if (!history.publications?.some((publication) => publication.data?.message_id === firstId)) {
+  const historyPublications = history.publications?.length ?? 0
+  if (historyPublications < 3) throw new Error('history did not contain all test publications')
+  if (!history.publications.some((publication) => publication.data?.message_id === firstId)) {
     throw new Error('history did not contain the first publication')
   }
+  if (tokenCalls < 1) throw new Error('token callback was not invoked')
 
   client.disconnect()
   await waitForDisconnected(client)
@@ -120,8 +135,8 @@ try {
       connected: true,
       subscribed: true,
       initialRecovered: Boolean(initial.recovered),
-      presenceClients: Object.keys(presence.clients ?? {}).length,
-      historyPublications: history.publications.length,
+      presenceClients,
+      historyPublications,
       recovered: Boolean(recovered.recovered),
       duplicatesSuppressed: true,
       tokenCalls,

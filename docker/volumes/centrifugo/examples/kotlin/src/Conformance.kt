@@ -36,6 +36,19 @@ private fun waitForPublication(queue: LinkedBlockingQueue<ByteArray>, messageId:
   throw IllegalStateException("publication $messageId timed out")
 }
 
+private fun waitForDeliveries(
+  delivered: ConcurrentHashMap<String, AtomicInteger>,
+  messageId: String,
+  expected: Int,
+) {
+  val deadline = System.currentTimeMillis() + 15_000
+  while (System.currentTimeMillis() < deadline) {
+    if ((delivered[messageId]?.get() ?: 0) >= expected) return
+    Thread.sleep(20)
+  }
+  throw IllegalStateException("publication $messageId was delivered fewer than $expected times")
+}
+
 fun main() {
   val baseUrl = requireEnv("SUPABASE_URL")
   val apikey = requireEnv("SUPABASE_ANON_KEY")
@@ -54,6 +67,7 @@ fun main() {
   val initialRecovered = AtomicBoolean(false)
   val initialSubscribed = AtomicBoolean(false)
   val publications = LinkedBlockingQueue<ByteArray>()
+  val delivered = ConcurrentHashMap<String, AtomicInteger>()
   val received = ConcurrentHashMap<String, AtomicInteger>()
   val dedupe = Deduplicator()
 
@@ -91,6 +105,7 @@ fun main() {
       object : SubscriptionEventListener() {
         override fun onPublication(sub: Subscription, event: PublicationEvent) {
           val key = publicationKey(event.data, event.offset)
+          if (key != null) delivered.computeIfAbsent(key) { AtomicInteger() }.incrementAndGet()
           if (!dedupe.accept(key)) return
           if (key != null) received.computeIfAbsent(key) { AtomicInteger() }.incrementAndGet()
           publications.put(event.data ?: ByteArray(0))
@@ -123,16 +138,22 @@ fun main() {
     apiPublish(baseUrl, apiKey, channel, """{"message_id":"$duplicateId","source":"kotlin"}""", httpClient)
     waitForPublication(publications, duplicateId)
     apiPublish(baseUrl, apiKey, channel, """{"message_id":"$duplicateId","source":"kotlin"}""", httpClient)
-    Thread.sleep(500)
+    waitForDeliveries(delivered, duplicateId, 2)
     if ((received[duplicateId]?.get() ?: 0) != 1) throw IllegalStateException("duplicate was not suppressed")
 
     val presence = awaitResult<PresenceResult>(10_000) { callback -> subscription.presence(callback) }
+    val presenceClients = presence.clients.size
+    if (presenceClients < 1) throw IllegalStateException("presence did not include the client")
+
     val history = awaitResult<HistoryResult>(10_000) { callback ->
       subscription.history(HistoryOptions.Builder().withLimit(10).build(), callback)
     }
+    val historyPublications = history.publications.size
+    if (historyPublications < 3) throw IllegalStateException("history did not contain all test publications")
     if (history.publications.none { String(it.data, StandardCharsets.UTF_8).contains("\"$firstId\"") }) {
       throw IllegalStateException("history did not contain the first publication")
     }
+    if (tokens.callCount < 1) throw IllegalStateException("token callback was not invoked")
 
     subscribedLatch = CountDownLatch(1)
     subscriptionError.set(null)
@@ -155,7 +176,7 @@ fun main() {
     println(
       "CONFORMANCE_OK " + """{"sdk":"centrifuge-java","version":"0.8.0","path":"$path",""" +
         """"channel":"$channel","connected":true,"subscribed":true,"initialRecovered":${initialRecovered.get()},""" +
-        """"presenceClients":${presence.clients.size},"historyPublications":${history.publications.size},""" +
+        """"presenceClients":$presenceClients,"historyPublications":$historyPublications,""" +
         """"recovered":${recovered.get()},"duplicatesSuppressed":true,"tokenCalls":${tokens.callCount}}"""
     )
   } catch (error: Throwable) {

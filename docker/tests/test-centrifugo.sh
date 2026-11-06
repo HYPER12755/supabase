@@ -299,8 +299,8 @@ if command -v docker >/dev/null 2>&1 && docker inspect supabase-centrifugo >/dev
         *) check "Centrifugo metrics expose connected clients" "present" "missing" ;;
     esac
     case "$centrifugo_metrics" in
-        *'centrifugo_broker_redis_pub_sub_errors'*) check "Centrifugo metrics expose Redis errors" "present" "present" ;;
-        *) check "Centrifugo metrics expose Redis errors" "present" "missing" ;;
+        *'centrifugo_broker_redis_pub_sub_dropped_messages'*) check "Centrifugo metrics expose Redis broker" "present" "present" ;;
+        *) check "Centrifugo metrics expose Redis broker" "present" "missing" ;;
     esac
     case "$centrifugo_metrics" in
         *'centrifugo_proxy_errors'*) check "Centrifugo metrics expose proxy errors" "present" "present" ;;
