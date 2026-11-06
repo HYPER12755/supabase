@@ -264,7 +264,7 @@ Rules:
 | Path | Purpose |
 | --- | --- |
 | `docker/docker-compose.centrifugo.yml` | Beta overlay: Centrifugo, auth, outbox, migration/config mounts |
-| `docker/docker-compose.centrifugo-default.yml` | Promotion/rollback marker and default-client route set |
+| `docker/docker-compose.centrifugo-default.yml` | Not added in the beta; promotion is a client rollout and the beta overlay already routes `/realtime/v1/connection` (see Phase 10) |
 | `docker/volumes/centrifugo/config.json` | Centrifugo server config, non-secret defaults |
 | `docker/volumes/centrifugo/auth/` | `centrifugo-auth` service source and Dockerfile |
 | `docker/volumes/centrifugo/outbox/` | Outbox consumer source and Dockerfile |
@@ -732,33 +732,35 @@ Status: implemented on 2026-11-06. The suite passes locally with the scale overl
 
 Description: Make enablement, migration, and rollback obvious.
 
-- [ ] Write `docker/volumes/centrifugo/README.md`:
-  - [ ] What the beta is and is not.
-  - [ ] Enable/disable commands.
-  - [ ] Required secrets and where they live.
-  - [ ] Endpoint table.
-  - [ ] Auth flow.
-  - [ ] Outbox setup and table opt-in.
-  - [ ] Redis scale-out.
-  - [ ] Logs and metrics.
-  - [ ] Troubleshooting.
-  - [ ] Rollback.
-- [ ] Write `CLIENT_MIGRATION.md`.
+- [x] Write `docker/volumes/centrifugo/README.md`:
+  - [x] What the beta is and is not.
+  - [x] Enable/disable commands.
+  - [x] Required secrets and where they live.
+  - [x] Endpoint table.
+  - [x] Auth flow.
+  - [x] Outbox setup and table opt-in.
+  - [x] Redis scale-out.
+  - [x] Logs and metrics.
+  - [x] Troubleshooting.
+  - [x] Rollback.
+- [x] Write `CLIENT_MIGRATION.md`.
 - [x] Write `COMPATIBILITY.md`.
-- [ ] Add the pinned versions to `docker/versions.md`.
-- [ ] Add a short pointer from `docker/CONFIG.md` or the main self-hosting docs, or keep all Centrifugo docs isolated and link from the README.
-- [ ] Add a promotion checklist:
+- [x] Add the pinned versions to `docker/versions.md`.
+- [x] Add a short pointer from `docker/CONFIG.md` or the main self-hosting docs, or keep all Centrifugo docs isolated and link from the README.
+- [x] Add a promotion checklist (gates remain open in `OPERATIONS.md`):
   - [ ] Parity matrix is green.
   - [ ] JS/TS and mobile conformance pass.
   - [ ] Load targets pass.
   - [ ] Security review complete.
   - [ ] Rollback rehearsed.
-- [ ] Add a rollback checklist:
-  - [ ] Remove the default overlay.
+- [x] Add a rollback checklist (documented in `OPERATIONS.md`; not yet rehearsed):
+  - [ ] Remove the Centrifugo overlay (there is no separate default overlay in the beta).
   - [ ] Point clients back to Supabase Realtime.
   - [ ] Keep Centrifugo data for postmortem if needed.
   - [ ] Verify upstream Realtime still serves `/realtime/v1/websocket`.
-- [ ] Decide whether `docker-compose.centrifugo-default.yml` only flips client/docs defaults or also adds the `/realtime/v1/connection` alias. Do not route legacy Phoenix traffic to Centrifugo.
+- [x] Decide whether `docker-compose.centrifugo-default.yml` only flips client/docs defaults or also adds the `/realtime/v1/connection` alias. The beta does not add the overlay; promotion is a client rollout, the alias is already routed with the beta overlay, and `/realtime/v1/websocket` stays on Supabase Realtime.
+
+Status: implemented on 2026-11-06. The operator guide, client migration guide, compatibility matrix, pinned versions, and main self-hosting pointer are in place. `OPERATIONS.md` contains the promotion and rollback checklists. All promotion gates remain open until the Phase 11 reviews and a rollback rehearsal are complete.
 
 Acceptance: A new operator can enable, operate, migrate, and roll back using only the docs.
 
@@ -805,13 +807,13 @@ Acceptance: The beta exit checklist is complete; promotion and rollback are both
 
 ### Beta Done
 
-- [ ] Centrifugo starts only when the overlay is enabled.
+- [x] Centrifugo starts only when the overlay is enabled.
 - [ ] Supabase Realtime is untouched and all upstream tests pass.
-- [ ] Auth, subscribe authorization, and outbox delivery work end to end.
+- [x] Auth, subscribe authorization, and outbox delivery work end to end.
 - [x] JS/TS and one mobile client pass conformance.
-- [ ] Logs, metrics, health checks, and a runbook exist.
+- [x] Logs, metrics, health checks, and a runbook exist.
 - [ ] Rollback to Supabase Realtime is documented and tested.
-- [ ] Known limitations are documented, especially WAL/RLS and filter parity.
+- [x] Known limitations are documented, especially WAL/RLS and filter parity.
 
 ### Default Done
 

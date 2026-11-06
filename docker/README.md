@@ -45,6 +45,7 @@ This Docker Compose configuration includes the following services:
 - **[versions.md](./versions.md)** - Complete history of Docker image versions for rollback reference
 - **[Ask DeepWiki / Supabase](https://deepwiki.com/supabase/supabase/3-self-hosted-deployment)** - DeepWiki-generated description of self-hosted configuration
 - **[CONFIG.md](./CONFIG.md)** - Configuration reference for all environment variables
+- **[Centrifugo beta](./volumes/centrifugo/README.md)** - Opt-in realtime backend: enablement, client migration, operations, promotion, and rollback
 - **[Update your deployment](https://supabase.com/docs/guides/self-hosting/updating)** - Update an existing deployment with `update.sh`
 
 ## Updates

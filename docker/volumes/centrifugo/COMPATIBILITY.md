@@ -13,7 +13,7 @@ This matrix describes what the Centrifugo beta exposes relative to Supabase Real
 | `presence` read | `presence` command | Supported | Authenticated subscribers can read presence for their channels. Anonymous clients are denied. |
 | `channel.track(state)` / `channel.untrack()` | Automatic connection presence | Partial | Centrifugo presence is connection-scoped. A client is present while subscribed. There is no API for arbitrary per-client presence state; connection and subscription metadata come from the auth service, not the client. |
 | Join/leave events | `join` / `leave` pushes | Supported | Enable per subscription with `join_leave: true`; clients must also have presence permission. Join/leave is not forced on large channels. |
-| History / reconnect recovery | `history` command and recoverable subscriptions | Supported | Beta defaults: 100 publications, 300-second retention, forced recovery. History is bounded and memory-backed; it is lost on a Centrifugo restart. |
+| History / reconnect recovery | `history` command and recoverable subscriptions | Supported | Beta defaults: 100 publications, 300-second retention, forced recovery. The default overlay keeps history in memory and loses it on a Centrifugo restart; the optional scale overlay stores it in Redis, but the bundled local Redis has no persistence and loses it on a Redis restart. |
 | Private channel authorization | `user:<user_id>` namespace through the subscribe proxy | Supported | A user can subscribe only to their own `user:<uuid>` channel. Supabase's `private:` prefix is not translated automatically. |
 | Tenant channel authorization | `tenant:<tenant_id>:...` namespace through the subscribe proxy | Supported | Tenant membership comes from server-controlled claims; `user_metadata` is not trusted. Cross-tenant subscribe and publish are denied. |
 | `postgres_changes` | Outbox change events | Partial | Notification-only payloads by default. Full rows require an explicit reviewed allowlist. No WAL CDC, no exact RLS row filtering, and no old-record replay. |
@@ -47,7 +47,7 @@ This matrix describes what the Centrifugo beta exposes relative to Supabase Real
 - History and presence are per-namespace settings and apply to all channels in that namespace.
 - History is a bounded cache, not a durable event log. Do not use it as the source of truth.
 - Row-level policies are not evaluated for change events. Every subscriber to a tenant channel receives the event, including notification-only metadata; opt in only when every tenant member may know the change occurred.
-- The beta does not provide Redis scale-out, multi-node presence/history, or durable history. Those belong to the scale phase.
+- The default overlay does not provide Redis scale-out, multi-node presence/history, or durable history. The optional scale overlay adds a local Redis reference; production Redis HA remains environment-dependent.
 - Full-row change payloads bypass table RLS because the trigger runs as its owner. Review the allowlist entry before enabling it.
 
 ## Test Evidence

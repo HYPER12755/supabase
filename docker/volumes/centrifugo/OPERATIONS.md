@@ -234,6 +234,18 @@ Authorization denials and rate limits include `action`, `reason`, `channel`, and
 
 If the log pipeline is down, Docker still holds local container logs. The pipeline does not buffer indefinitely and does not guarantee delivery to Logflare during an outage.
 
+## Promotion checklist
+
+Do not make Centrifugo the default until every gate passes.
+
+- [ ] Compatibility matrix is green: run `tests/test-centrifugo-features.sh` and `tests/test-centrifugo-outbox.sh` and review [COMPATIBILITY.md](COMPATIBILITY.md).
+- [ ] JS/TS and at least one mobile SDK pass conformance: run `tests/test-centrifugo-clients.sh`.
+- [ ] Load targets pass: run `tests/test-centrifugo-load.sh`; run the scale and HA suites against the production-like topology.
+- [ ] Security review is complete, including token issuance, subscribe authorization, outbox SQL, gateway exposure, and log redaction.
+- [ ] Rollback is rehearsed on a staging deployment using the checklist below, and `/realtime/v1/websocket` still reaches Supabase Realtime.
+
+Promotion is a client rollout, not a Compose default. The beta has no `docker-compose.centrifugo-default.yml`. The `/realtime/v1/connection` alias is already routed when the overlay is enabled; never route `/realtime/v1/websocket` (Phoenix) to Centrifugo.
+
 ## Failure procedures
 
 ### WebSocket 401 or 403
@@ -294,13 +306,15 @@ If the log pipeline is down, Docker still holds local container logs. The pipeli
 4. Verify token issuance, WebSocket connect, and channel authorization.
 5. Remove the previous secret after all clients have refreshed.
 
-### Rollback
+### Rollback checklist
 
-1. Remove the Centrifugo overlay from `.env`.
-2. Stop the overlay services: `docker compose -f docker-compose.yml -f docker-compose.centrifugo.yml down`.
-3. Restart the base stack.
-4. Verify `/realtime/v1/websocket` and the Supabase Realtime API still work.
-5. Keep the outbox tables and functions; disable the overlay rather than deleting data.
+- [ ] Point clients back to Supabase Realtime using [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md#9-rollback-to-supabase-realtime).
+- [ ] Stop writing new feature traffic to Centrifugo channels.
+- [ ] Stop the stack, remove the Centrifugo overlays (there is no separate default overlay in the beta), and restart the base stack:
+  `sh run.sh stop && sh run.sh config remove centrifugo && sh run.sh start`
+  Remove `centrifugo-scale` and `centrifugo-scale-ha` too if they were enabled.
+- [ ] Keep the `centrifugo` schema, outbox, dead-letter, and allowlist data for postmortem and retention review. Do not drop them as part of rollback.
+- [ ] Verify `/realtime/v1/websocket` and `/realtime/v1/api/*` still reach Supabase Realtime.
 
 ### Node restart
 

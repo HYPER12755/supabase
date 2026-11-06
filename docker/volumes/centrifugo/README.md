@@ -2,6 +2,10 @@
 
 Centrifugo runs as an additive, opt-in realtime backend alongside Supabase Realtime.
 
+## Scope
+
+The beta is an opt-in realtime backend for applications that can use an official Centrifugo SDK. It is not a Phoenix-compatible replacement, it does not change Supabase Realtime's default routes, and it does not provide WAL-level change capture or exact RLS row filtering. See [COMPATIBILITY.md](COMPATIBILITY.md) for the feature matrix and current limits.
+
 Phase 3 status: `centrifugo-auth` issues short-lived Centrifugo connection tokens, validates Supabase JWTs/JWKS, and runs subscribe/publish authorization through Centrifugo proxies. Envoy is the only supported gateway for this beta.
 
 Phase 4 status: `centrifugo-migrate` applies the idempotent Postgres schema, roles, outbox tables, and `centrifugo.authorize`; `centrifugo-outbox` publishes change events through the internal Centrifugo HTTP API. A reviewed table trigger emits notification-only events by default, and full-row payloads require an explicit allowlist entry.
@@ -15,6 +19,8 @@ Phase 7 status: Centrifugo, auth, and outbox logs route through Vector to the `c
 Phase 8 status: applications use the official Centrifugo SDKs directly; no separate client SDK is published. The shared client contract is in [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md), the Supabase-to-Centrifugo mapping and rollback steps are in [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md), and copy-paste JS and Kotlin integrations are in [examples/](examples/). `tests/test-centrifugo-clients.sh` runs the JS and Kotlin self-tests and SDK conformance checks against both `/realtime/v1/connection/websocket` and `/centrifugo/v1/connection/websocket`.
 
 Phase 9 status: `tests/test-centrifugo-security.sh`, `tests/test-centrifugo-sql.sh`, and `tests/test-centrifugo-secrets.sh` cover client-token rejection, outbox privileges, log secret scanning, SQL helper validation, and secret generation. `.github/workflows/centrifugo-tests.yml` runs the path-filtered suite and installs the pinned Kotlin toolchain for client conformance. When the logs overlay is enabled, `logs-source-init` provisions `centrifugo.logs.prod` before Vector starts, and `tests/test-centrifugo-logs.sh` verifies live delivery when the analytics and auth containers are running.
+
+Phase 10 status: this guide, [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md), [COMPATIBILITY.md](COMPATIBILITY.md), the pinned image versions, and the main self-hosting pointer are in place. Promotion gates and the rollback checklist are in [OPERATIONS.md](OPERATIONS.md); all promotion gates remain open until the Phase 11 reviews and a rollback rehearsal are complete.
 
 ## Enable
 
@@ -111,14 +117,22 @@ sh tests/test-centrifugo-logs.sh
 
 These paths are routed through the gateway:
 
-- `/centrifugo/v1/connection/websocket` (primary WebSocket)
-- `/centrifugo/v1/websocket` (alias)
-- `/centrifugo/v1/health` (no dashboard basic auth)
-- `/centrifugo/v1/api/*` (requires `X-API-Key`; no CORS)
-- `/centrifugo/v1/auth/token` (CORS, apikey, optional bearer session)
-- `/realtime/v1/connection/*` (reserved SDK alias to Centrifugo)
+| Path | Purpose | Access |
+| --- | --- | --- |
+| `/centrifugo/v1/connection/websocket` | Primary WebSocket | Centrifugo connection token |
+| `/centrifugo/v1/websocket` | WebSocket alias | Centrifugo connection token |
+| `/centrifugo/v1/health` | Gateway health | No dashboard basic auth |
+| `/centrifugo/v1/api/*` | Server-side publish API | `X-API-Key`; keep internal |
+| `/centrifugo/v1/auth/token` | Token issuance | `apikey`, optional bearer session, CORS |
+| `/realtime/v1/connection/*` | Reserved SDK alias to Centrifugo | Centrifugo connection token |
 
 `/centrifugo/v1/auth/subscribe` and `/centrifugo/v1/auth/publish` are internal proxy endpoints on `centrifugo-auth:8090`; they are not routed publicly. Supabase Realtime keeps `/realtime/v1/websocket` and `/realtime/v1/api/*`.
+
+## Logs and metrics
+
+- Centrifugo exposes Prometheus metrics at `/metrics` on port 8000; `centrifugo-auth` exposes them on port 8090; the outbox worker exposes them on port 9100. These endpoints are internal and must not be routed publicly.
+- With the logs overlay enabled, Vector sends Centrifugo, auth, and outbox logs to the `centrifugo.logs.prod` Logflare source. `logs-source-init` provisions that source before Vector starts.
+- Metrics reference, alert examples, dashboard queries, and failure procedures are in [OPERATIONS.md](OPERATIONS.md).
 
 ## Auth behavior
 
@@ -141,9 +155,14 @@ These paths are routed through the gateway:
 
 ## Configuration
 
-- `config.json` contains non-secret server defaults, channel proxies, and namespace configuration.
-- `.env.centrifugo` contains local secrets and is loaded by the base overlay.
-- `.env.centrifugo-scale` contains Redis addresses, credentials, and TLS flags and is loaded only by the scale overlay. See `.env.centrifugo-scale.example`.
+| File | Contents | Loaded by |
+| --- | --- | --- |
+| `config.json` | Non-secret server defaults, channel proxies, and namespace configuration | Base overlay |
+| `.env.centrifugo` | Connection-token HMAC secret, HTTP API key, and auth/outbox database passwords | Base overlay |
+| `.env.centrifugo-scale` | Redis addresses, credentials, and TLS flags | Scale and HA overlays |
+
+`config.json` contains no secrets. The generated `.env.centrifugo` and `.env.centrifugo-scale` files are ignored by git and must not be committed. See `.env.centrifugo.example` and `.env.centrifugo-scale.example` for the full variable sets.
+
 - `CENTRIFUGO_CLIENT_ALLOWED_ORIGINS` is derived from the deployment's `SITE_URL` and `SUPABASE_PUBLIC_URL`; the auth service enforces the same origins for token CORS.
 - The HTTP API requires the Centrifugo API key and must not be exposed to clients. Do not publish port 8000 or the API key.
 - Internal HTTP API requests use the `X-API-Key` header; `Authorization: Bearer` is not accepted.
@@ -184,6 +203,21 @@ The migration service uses `supabase_admin` only for this one command. It requir
 3. After the expiry timestamp, clear both previous-secret variables and restart again.
 
 Centrifugo accepts the previous key until the timestamp; new tokens are always signed with the current key.
+
+## Troubleshooting
+
+Start with container health and the verify commands above. Common failures are covered in [OPERATIONS.md](OPERATIONS.md):
+
+- `401` or `403` on connect or subscribe: check the token endpoint, JWKS, and channel authorization.
+- `503` from auth or the API: check `centrifugo-auth` health and database connectivity.
+- Outbox lag or dead letters: check the outbox metrics and consumer logs.
+- Redis failover or node restart: follow the Redis and gateway procedures.
+
+## Promotion and rollback
+
+The beta does not ship `docker-compose.centrifugo-default.yml`. Promotion is a client rollout, not a Compose default: the `/realtime/v1/connection` alias is already routed when the overlay is enabled, and `/realtime/v1/websocket` stays on Supabase Realtime. Never route legacy Phoenix traffic to Centrifugo.
+
+Promotion gates and the rollback checklist are in [OPERATIONS.md](OPERATIONS.md). Client migration and rollback steps are in [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md).
 
 ## Notes
 
