@@ -35,6 +35,8 @@ scrape_configs:
 
 ## Key metrics
 
+SLO targets, support boundaries, and the threat model are in [HARDENING.md](HARDENING.md). The metrics below are the evidence for those targets.
+
 | Area | Metric | Use |
 | --- | --- | --- |
 | Connections | `centrifugo_node_num_clients` | Per-node connected clients. Alert on a sudden drop to zero or a large imbalance. |
@@ -239,10 +241,10 @@ If the log pipeline is down, Docker still holds local container logs. The pipeli
 Do not make Centrifugo the default until every gate passes.
 
 - [ ] Compatibility matrix is green: run `tests/test-centrifugo-features.sh` and `tests/test-centrifugo-outbox.sh` and review [COMPATIBILITY.md](COMPATIBILITY.md).
-- [ ] JS/TS and at least one mobile SDK pass conformance: run `tests/test-centrifugo-clients.sh`.
-- [ ] Load targets pass: run `tests/test-centrifugo-load.sh`; run the scale and HA suites against the production-like topology.
-- [ ] Security review is complete, including token issuance, subscribe authorization, outbox SQL, gateway exposure, and log redaction.
-- [ ] Rollback is rehearsed on a staging deployment using the checklist below, and `/realtime/v1/websocket` still reaches Supabase Realtime.
+- [x] JS/TS and at least one mobile SDK pass conformance: `tests/test-centrifugo-clients.sh` passed 7/7.
+- [x] Load targets pass on the local reference: `tests/test-centrifugo-load.sh` passed 10/10, and the scale and HA suites passed 33/33 and 19/19.
+- [x] Security review is complete, including token issuance, subscribe authorization, outbox SQL, gateway exposure, and log redaction. See [HARDENING.md](HARDENING.md).
+- [x] Rollback is rehearsed on the local reference using the checklist below; `/realtime/v1/websocket` and `/realtime/v1/api/*` still reach Supabase Realtime. Client migration remains a production step.
 
 Promotion is a client rollout, not a Compose default. The beta has no `docker-compose.centrifugo-default.yml`. The `/realtime/v1/connection` alias is already routed when the overlay is enabled; never route `/realtime/v1/websocket` (Phoenix) to Centrifugo.
 
@@ -315,6 +317,8 @@ Promotion is a client rollout, not a Compose default. The beta has no `docker-co
   Remove `centrifugo-scale` and `centrifugo-scale-ha` too if they were enabled.
 - [ ] Keep the `centrifugo` schema, outbox, dead-letter, and allowlist data for postmortem and retention review. Do not drop them as part of rollback.
 - [ ] Verify `/realtime/v1/websocket` and `/realtime/v1/api/*` still reach Supabase Realtime.
+
+Rehearsal result: verified on 2026-11-07 on the local reference. With the Centrifugo overlays removed, `/realtime/v1/websocket` and `/realtime/v1/api/*` returned `401` (the request reached Supabase Realtime), and the `centrifugo` schema, outbox, and allowlist data remained in place. `/centrifugo/v1/health` returned `503` because the additive Envoy routes remain but the Centrifugo service is absent. Move clients back before disabling the overlay, and do not expect a `404` on Centrifugo paths until those routes are removed in a later change.
 
 ### Node restart
 

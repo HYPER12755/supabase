@@ -273,9 +273,20 @@ function waitForReplication() {
     redisContainer,
     'sh',
     '-c',
-    'REDISCLI_AUTH="$CENTRIFUGO_ENGINE_REDIS_PASSWORD" redis-cli --no-auth-warning WAIT 1 5000',
+    'REDISCLI_AUTH="$CENTRIFUGO_ENGINE_REDIS_PASSWORD" redis-cli --no-auth-warning WAIT 1 15000',
   ])
   assert.equal(replicas, '1', 'redis replica did not acknowledge the baseline writes')
+}
+
+function replicaReplicationReady() {
+  const output = docker([
+    'exec',
+    replicasContainer,
+    'sh',
+    '-c',
+    'REDISCLI_AUTH="$CENTRIFUGO_ENGINE_REDIS_PASSWORD" redis-cli --no-auth-warning INFO replication',
+  ])
+  return output.includes('role:slave') && output.includes('master_link_status:up')
 }
 
 function parseMessages(raw) {
@@ -420,12 +431,14 @@ async function restoreTopology() {
     await waitFor('old master to be promoted back', () => sentinelMasterIp() === masterIp, 90000).catch(() => {})
   }
   await waitFor('proxy to route to the restored master', () => proxyRole() === 'master', 30000).catch(() => {})
-  return sentinelMasterIp() === masterIp && proxyRole() === 'master'
+  await waitFor('replica to reconnect to the restored master', replicaReplicationReady, 60000).catch(() => {})
+  return sentinelMasterIp() === masterIp && proxyRole() === 'master' && replicaReplicationReady()
 }
 
 async function main() {
   const result = {}
   console.error('stage: baseline')
+  await waitFor('replica to be ready for baseline writes', replicaReplicationReady, 60000)
   masterIp = inspectIp(redisContainer)
   const replicaIP = inspectIp(replicasContainer)
   result.initialMaster = sentinelMasterIp() === masterIp

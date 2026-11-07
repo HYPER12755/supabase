@@ -20,7 +20,9 @@ Phase 8 status: applications use the official Centrifugo SDKs directly; no separ
 
 Phase 9 status: `tests/test-centrifugo-security.sh`, `tests/test-centrifugo-sql.sh`, and `tests/test-centrifugo-secrets.sh` cover client-token rejection, outbox privileges, log secret scanning, SQL helper validation, and secret generation. `.github/workflows/centrifugo-tests.yml` runs the path-filtered suite and installs the pinned Kotlin toolchain for client conformance. When the logs overlay is enabled, `logs-source-init` provisions `centrifugo.logs.prod` before Vector starts, and `tests/test-centrifugo-logs.sh` verifies live delivery when the analytics and auth containers are running.
 
-Phase 10 status: this guide, [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md), [COMPATIBILITY.md](COMPATIBILITY.md), the pinned image versions, and the main self-hosting pointer are in place. Promotion gates and the rollback checklist are in [OPERATIONS.md](OPERATIONS.md); all promotion gates remain open until the Phase 11 reviews and a rollback rehearsal are complete.
+Phase 10 status: this guide, [CLIENT_MIGRATION.md](CLIENT_MIGRATION.md), [COMPATIBILITY.md](COMPATIBILITY.md), the pinned image versions, and the main self-hosting pointer are in place. Promotion gates and the rollback checklist are in [OPERATIONS.md](OPERATIONS.md). Phase 11 reviews and the local rollback rehearsal are complete; production client migration, the parity gate, the upgrade gate, and external sign-off remain open.
+
+Phase 11 status: [HARDENING.md](HARDENING.md) records the threat model, security and privacy reviews, SLOs, support boundaries, and verification evidence. Backup/restore, token and API-key rotation, Postgres restart recovery, Redis-loss recovery, the full regression suite, and the rollback rehearsal have been exercised locally. Two consecutive base+scale runs and two consecutive HA runs pass. The upgrade gate is blocked because `v6.10.2` is the latest Centrifugo release, and external sign-off is still pending; promotion gates remain open until those and the production client rollout are resolved.
 
 ## Enable
 

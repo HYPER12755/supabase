@@ -1,7 +1,7 @@
 # Centrifugo Realtime Beta — End-to-End TODO
 
-Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (48/48 auth, 30/30 gateway). Kong is intentionally out of scope: Envoy is the only supported gateway for this beta, consistent with Supabase's move to Envoy. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`. Phase 5 is implemented and verified: namespace presence, opt-in join/leave, bounded history with recovery, authenticated presence/history, public-only anonymous subscribe, and proxy-authorized server/client broadcast; `test-centrifugo-features.sh` passes 41/41, including two-user/two-tenant isolation and error mapping. `COMPATIBILITY.md` records the supported, partial, and unsupported parity matrix, including the absence of WAL CDC, exact RLS row filtering, and server-side filter parity. Phase 6 is committed as `9f37c2fd`: scale/HA overlays, partitioned outbox consumers, load results, and the HAProxy session-drain fix pass 33/33 scale, 10/10 load, and 19/19 HA checks. Phase 7 is implemented: Vector routes Centrifugo/auth/outbox logs to `centrifugo.logs.prod`, auth exposes Prometheus metrics and audit fields, and [OPERATIONS.md](docker/volumes/centrifugo/OPERATIONS.md) documents alerts, dashboards, health checks, and failure procedures. Gateway checks pass 30/30, auth 48/48, auth unit 15/15, and Vector pipeline tests 4/4. The battle test on 2026-11-03 confirmed auth-outage socket continuity and single-worker outbox failover, found Envoy's ~15-second node-ejection window can return transient API 503s, and confirmed a Redis restart sends existing subscribers `unsubscribe` code 2500 so clients must resubscribe before delivery resumes. Post-battle suites still pass 30/30 gateway, 48/48 auth, 41/41 features, 11/11 outbox, and 33/33 scale.
-Last updated: 2026-11-03
+Status: Phase 1 is accepted on Envoy only. Phase 2 gateway routes are implemented and verified on Envoy. Phase 3 `centrifugo-auth` is implemented and verified end-to-end on Envoy (48/48 auth, 30/30 gateway). Kong is intentionally out of scope: Envoy is the only supported gateway for this beta, consistent with Supabase's move to Envoy. Baseline suites pass (39/39 self-hosted, 56/56 auth keys, 13/13 container logs). Phase 4 is implemented and verified: idempotent migration and least-privilege roles, outbox consumer, notification-only default with a reviewed full-row allowlist, strict/partitioned ordering, and 11/11 integration tests plus 18/18 outbox unit tests. The change plane does not modify `_realtime`. Phase 5 is implemented and verified: namespace presence, opt-in join/leave, bounded history with recovery, authenticated presence/history, public-only anonymous subscribe, and proxy-authorized server/client broadcast; `test-centrifugo-features.sh` passes 41/41, including two-user/two-tenant isolation and error mapping. `COMPATIBILITY.md` records the supported, partial, and unsupported parity matrix, including the absence of WAL CDC, exact RLS row filtering, and server-side filter parity. Phase 6 is committed as `9f37c2fd`: scale/HA overlays, partitioned outbox consumers, load results, and the HAProxy session-drain fix pass 33/33 scale, 10/10 load, and 19/19 HA checks. Phase 7 is implemented: Vector routes Centrifugo/auth/outbox logs to `centrifugo.logs.prod`, auth exposes Prometheus metrics and audit fields, and [OPERATIONS.md](docker/volumes/centrifugo/OPERATIONS.md) documents alerts, dashboards, health checks, and failure procedures. Gateway checks pass 30/30, auth 48/48, auth unit 15/15, and Vector pipeline tests 4/4. The battle test on 2026-11-03 confirmed auth-outage socket continuity and single-worker outbox failover, found Envoy's ~15-second node-ejection window can return transient API 503s, and confirmed a Redis restart sends existing subscribers `unsubscribe` code 2500 so clients must resubscribe before delivery resumes. Post-battle suites still pass 30/30 gateway, 48/48 auth, 41/41 features, 11/11 outbox, and 33/33 scale. Phase 11 hardening is documented in [HARDENING.md](docker/volumes/centrifugo/HARDENING.md): two consecutive base+scale runs and two consecutive HA runs pass, and the local rollback rehearsal succeeded. External sign-off and the next-patch upgrade check remain open, so the beta is not marked complete.
+Last updated: 2026-11-07
 Repository root: this checkout (use relative paths)
 Branch: `_nazmiforreal` (create a feature branch before implementation)
 
@@ -272,6 +272,7 @@ Rules:
 | `docker/volumes/centrifugo/README.md` | Operator guide: enable, configure, operate, disable |
 | `docker/volumes/centrifugo/CLIENT_MIGRATION.md` | SDK mapping and migration guide |
 | `docker/volumes/centrifugo/COMPATIBILITY.md` | Feature matrix and known limitations |
+| `docker/volumes/centrifugo/HARDENING.md` | Threat model, security/privacy reviews, SLOs, support boundaries, and verification evidence |
 | `docker/utils/generate-centrifugo-keys.sh` | Generate local Centrifugo secrets without printing them |
 | `docker/.env.centrifugo.example` | Placeholder environment file |
 | `docker/.env.centrifugo` | Local secrets, ignored by git |
@@ -749,18 +750,18 @@ Description: Make enablement, migration, and rollback obvious.
 - [x] Add a short pointer from `docker/CONFIG.md` or the main self-hosting docs, or keep all Centrifugo docs isolated and link from the README.
 - [x] Add a promotion checklist (gates remain open in `OPERATIONS.md`):
   - [ ] Parity matrix is green.
-  - [ ] JS/TS and mobile conformance pass.
-  - [ ] Load targets pass.
-  - [ ] Security review complete.
-  - [ ] Rollback rehearsed.
-- [x] Add a rollback checklist (documented in `OPERATIONS.md`; not yet rehearsed):
-  - [ ] Remove the Centrifugo overlay (there is no separate default overlay in the beta).
-  - [ ] Point clients back to Supabase Realtime.
-  - [ ] Keep Centrifugo data for postmortem if needed.
-  - [ ] Verify upstream Realtime still serves `/realtime/v1/websocket`.
+  - [x] JS/TS and mobile conformance pass.
+  - [x] Load targets pass.
+  - [x] Security review complete.
+  - [x] Rollback rehearsed locally.
+- [x] Add a rollback checklist (documented in `OPERATIONS.md`; rehearsed locally):
+  - [x] Remove the Centrifugo overlay (there is no separate default overlay in the beta).
+  - [ ] Point clients back to Supabase Realtime. This remains a production client-rollout step.
+  - [x] Keep Centrifugo data for postmortem if needed.
+  - [x] Verify upstream Realtime still serves `/realtime/v1/websocket`.
 - [x] Decide whether `docker-compose.centrifugo-default.yml` only flips client/docs defaults or also adds the `/realtime/v1/connection` alias. The beta does not add the overlay; promotion is a client rollout, the alias is already routed with the beta overlay, and `/realtime/v1/websocket` stays on Supabase Realtime.
 
-Status: implemented on 2026-11-06. The operator guide, client migration guide, compatibility matrix, pinned versions, and main self-hosting pointer are in place. `OPERATIONS.md` contains the promotion and rollback checklists. All promotion gates remain open until the Phase 11 reviews and a rollback rehearsal are complete.
+Status: implemented on 2026-11-06. The operator guide, client migration guide, compatibility matrix, pinned versions, and main self-hosting pointer are in place. `OPERATIONS.md` contains the promotion and rollback checklists. Phase 11 reviews, verification, and the local rollback rehearsal are complete; production client migration, the parity gate, the upgrade gate, and external sign-off remain open.
 
 Acceptance: A new operator can enable, operate, migrate, and roll back using only the docs.
 
@@ -768,18 +769,20 @@ Acceptance: A new operator can enable, operate, migrate, and roll back using onl
 
 Description: Close the gap between "works" and "safe to default".
 
-- [ ] Run a threat model review.
-- [ ] Run a security review of token issuance, subscribe authorization, outbox SQL, and gateway exposure.
-- [ ] Run a privacy review of notification-only events and any full-row allowlist.
-- [ ] Define SLOs for connection success, auth latency, delivery latency, and outbox lag.
-- [ ] Define support boundaries and known limitations.
-- [ ] Test upgrade from the pinned Centrifugo version to the next patch.
-- [ ] Test backup/restore of config, secrets, SQL, and outbox state.
-- [ ] Test secret rotation for the connection-token key and API key.
-- [ ] Test disaster recovery with Redis loss and Postgres restart.
-- [ ] Re-run all upstream and Centrifugo tests.
+- [x] Run a threat model review.
+- [x] Run a security review of token issuance, subscribe authorization, outbox SQL, and gateway exposure.
+- [x] Run a privacy review of notification-only events and any full-row allowlist.
+- [x] Define SLOs for connection success, auth latency, delivery latency, and outbox lag.
+- [x] Define support boundaries and known limitations.
+- [ ] Test upgrade from the pinned Centrifugo version to the next patch. Blocked: `v6.10.2` is the latest release.
+- [x] Test backup/restore of config, secrets, SQL, and outbox state.
+- [x] Test secret rotation for the connection-token key and API key.
+- [x] Test disaster recovery with Redis loss and Postgres restart.
+- [x] Re-run all upstream and Centrifugo tests.
 - [ ] Obtain sign-off from the owner of the fork and the upstream Realtime maintainers.
 - [ ] Mark beta as complete only after the promotion checklist is green.
+
+Status: hardening reviews, verification, and the local rollback rehearsal are complete as of 2026-11-07; see [HARDENING.md](docker/volumes/centrifugo/HARDENING.md). The next-patch upgrade check is blocked on a newer Centrifugo release, and external sign-off is still pending. Beta exit is not complete.
 
 Acceptance: The beta exit checklist is complete; promotion and rollback are both proven.
 

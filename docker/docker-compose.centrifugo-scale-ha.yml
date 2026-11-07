@@ -31,6 +31,7 @@ services:
             printf 'appendonly no\n'
             printf 'dir /tmp\n'
           } > "$$conf"
+          rm -f /tmp/dump.rdb
           exec redis-server "$$conf"
 
   redis-replica:
@@ -58,6 +59,7 @@ services:
             printf 'appendonly no\n'
             printf 'dir /tmp\n'
           } > "$$conf"
+          rm -f /tmp/dump.rdb
           exec redis-server "$$conf"
     depends_on:
       redis:
